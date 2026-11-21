@@ -281,6 +281,9 @@ export default function App() {
               onUpdateMessage={(id, text) =>
                 setChatMessages((prev) => prev.map((m) => (m.id === id ? { ...m, text } : m)))
               }
+              onRemoveMessage={(id) =>
+                setChatMessages((prev) => prev.filter((m) => m.id !== id))
+              }
               onClearMessages={() => setChatMessages([])}
             />
           )}
@@ -317,6 +320,9 @@ export default function App() {
           onAddMessages={(msgs) => setChatMessages((prev) => [...prev, ...msgs])}
           onUpdateMessage={(id, text) =>
             setChatMessages((prev) => prev.map((m) => (m.id === id ? { ...m, text } : m)))
+          }
+          onRemoveMessage={(id) =>
+            setChatMessages((prev) => prev.filter((m) => m.id !== id))
           }
         />
       </Suspense>

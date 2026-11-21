@@ -19,6 +19,7 @@ function getGeminiClient(): GoogleGenAI {
   return new GoogleGenAI({
     apiKey,
     httpOptions: {
+      timeout: 12000,
       headers: {
         "User-Agent": "aistudio-build",
       },
@@ -42,33 +43,162 @@ export function getAqiCategory(aqi: number): { label: string; severity: "good" |
   return { label: "Hazardous", severity: "severe" };
 }
 
+const TEXT_MODEL_CHAIN = ["gemini-4-hydrogen", "gemini-3.1-flash-lite"] as const;
+
+function extractErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object") {
+    const obj = err as { message?: unknown; error?: { message?: unknown } };
+    if (typeof obj.message === "string" && obj.message) return obj.message;
+    if (typeof obj.error?.message === "string" && obj.error.message) return obj.error.message;
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return String(err);
+    }
+  }
+  return String(err);
+}
+
+function isTransientCapacityError(err: unknown): boolean {
+  const msg = extractErrorMessage(err);
+  const name = err instanceof Error ? err.name : "";
+  return (
+    name === "AbortError" ||
+    name === "TimeoutError" ||
+    msg.includes("503") ||
+    msg.includes("429") ||
+    msg.includes("UNAVAILABLE") ||
+    msg.includes("high demand") ||
+    msg.includes("RESOURCE_EXHAUSTED") ||
+    msg.toLowerCase().includes("timeout") ||
+    msg.toLowerCase().includes("aborted")
+  );
+}
+
+function formatReadableGeminiError(err: unknown): string {
+  const raw = extractErrorMessage(err);
+  if (raw.includes("GEMINI_API_KEY is not configured")) {
+    return "AI service key is not configured. Please verify GEMINI_API_KEY in Settings > Secrets.";
+  }
+  if (raw.includes("PERMISSION_DENIED") || raw.includes("403")) {
+    return "Gemini API permission denied. Please verify your API key in Settings > Secrets.";
+  }
+  if (raw.includes("503") || raw.includes("UNAVAILABLE") || raw.includes("high demand")) {
+    return "The AI service is experiencing temporary high demand. Please try again in a few seconds.";
+  }
+  if (raw.includes("429") || raw.includes("RESOURCE_EXHAUSTED")) {
+    return "AI rate limit reached. Please wait a moment and try again.";
+  }
+  return `Unable to reach AI advisor: ${raw}`;
+}
+
+function parseJsonSafe(rawText: string | undefined): unknown {
+  const cleaned = (rawText || "{}")
+    .trim()
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+  return JSON.parse(cleaned || "{}");
+}
+
+async function generateWithFallback(
+  ai: GoogleGenAI,
+  params: {
+    contents: string;
+    systemInstruction: string;
+    responseMimeType?: string;
+    responseSchema?: Record<string, unknown>;
+  }
+) {
+  let lastError: unknown;
+  for (const model of TEXT_MODEL_CHAIN) {
+    try {
+      const timeoutMs = model === "gemini-4-hydrogen" ? 9000 : 15000;
+      const config: Record<string, unknown> = {
+        systemInstruction: params.systemInstruction,
+        abortSignal: AbortSignal.timeout(timeoutMs),
+      };
+      if (model === "gemini-4-hydrogen") {
+        config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+      }
+      if (params.responseMimeType) {
+        config.responseMimeType = params.responseMimeType;
+      }
+      if (params.responseSchema) {
+        config.responseSchema = params.responseSchema;
+      }
+      return await ai.models.generateContent({
+        model,
+        contents: params.contents,
+        config: config as Parameters<GoogleGenAI["models"]["generateContent"]>[0]["config"],
+      });
+    } catch (err) {
+      lastError = err;
+      console.warn(`[Gemini generateWithFallback] ${model} failed:`, extractErrorMessage(err));
+      if (isTransientCapacityError(err)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError;
+}
+
+async function streamWithFallback(
+  ai: GoogleGenAI,
+  params: {
+    contents: string;
+    systemInstruction: string;
+  },
+  onChunk: (text: string) => void
+) {
+  let lastError: unknown;
+  for (const model of TEXT_MODEL_CHAIN) {
+    let emittedAny = false;
+    try {
+      const timeoutMs = model === "gemini-4-hydrogen" ? 9000 : 15000;
+      const config: Record<string, unknown> = {
+        systemInstruction: params.systemInstruction,
+        abortSignal: AbortSignal.timeout(timeoutMs),
+      };
+      if (model === "gemini-4-hydrogen") {
+        config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+      }
+      const stream = await ai.models.generateContentStream({
+        model,
+        contents: params.contents,
+        config: config as Parameters<GoogleGenAI["models"]["generateContentStream"]>[0]["config"],
+      });
+      for await (const chunk of stream) {
+        if (chunk.text) {
+          emittedAny = true;
+          onChunk(chunk.text);
+        }
+      }
+      if (!emittedAny) {
+        throw new Error(`Empty response stream from ${model}`);
+      }
+      return;
+    } catch (err) {
+      lastError = err;
+      console.warn(`[Gemini streamWithFallback] ${model} failed:`, extractErrorMessage(err));
+      if (!emittedAny && (isTransientCapacityError(err) || extractErrorMessage(err).includes("Empty response stream"))) {
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError;
+}
+
 function handleGeminiError(err: unknown, res: Response) {
   const message = err instanceof Error ? err.message : "Unknown Gemini API error";
   const statusMatch = message.match(/\b(400|403|404|429|500|503)\b/);
   const statusCode = statusMatch ? Number(statusMatch[1]) : 500;
-
-  if (message.includes("GEMINI_API_KEY is not configured")) {
-    return res.status(500).json({
-      error: "AI service key is not configured. Please verify GEMINI_API_KEY in Settings > Secrets.",
-    });
-  }
-  if (statusCode === 403 || message.includes("PERMISSION_DENIED")) {
-    return res.status(403).json({
-      error: "Gemini API permission denied. Please verify your API key in Settings > Secrets.",
-    });
-  }
-  if (statusCode === 429 || message.includes("RESOURCE_EXHAUSTED")) {
-    return res.status(429).json({
-      error: "Rate limit reached on the AI service. Please wait a moment and try again.",
-    });
-  }
-  if (statusCode === 404 || message.includes("NOT_FOUND")) {
-    return res.status(404).json({
-      error: "Requested Gemini model could not be found.",
-    });
-  }
   return res.status(statusCode >= 400 && statusCode < 600 ? statusCode : 500).json({
-    error: `Unable to generate AI guidance: ${message}`,
+    error: formatReadableGeminiError(err),
   });
 }
 
@@ -380,42 +510,38 @@ Family Profile:
 Return a crisp JSON plan with 4 dayparts (morning, midday, afternoon, evening), specific clock windows synced to the hourly forecast, concrete low-emission actions, respiratory mask/filtration guidance, and quantitative real-world exposure/emission impact. Keep prose concise and evidence-based.
 `;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-4-hydrogen",
+      const response = await generateWithFallback(ai, {
         contents: prompt,
-        config: {
-          systemInstruction:
-            "You are an environmental health physician and urban air quality engineer advising families. Ground every time window and precaution in the exact hourly AQI/PM2.5/NO2 numbers supplied. Never fabricate sensor readings or use generic fluff.",
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              summary: { type: Type.STRING },
-              maskGuidance: { type: Type.STRING },
-              ventilationAdvice: { type: Type.STRING },
-              estimatedExposureReductionPct: { type: Type.INTEGER },
-              estimatedDailyCo2SavedKg: { type: Type.NUMBER },
-              dayparts: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    id: { type: Type.STRING },
-                    label: { type: Type.STRING },
-                    timeRange: { type: Type.STRING },
-                    riskLevel: { type: Type.STRING },
-                    headline: { type: Type.STRING },
-                    steps: {
-                      type: Type.ARRAY,
-                      items: {
-                        type: Type.OBJECT,
-                        properties: {
-                          title: { type: Type.STRING },
-                          detail: { type: Type.STRING },
-                          realWorldImpact: { type: Type.STRING },
-                          category: { type: Type.STRING },
-                        },
+        systemInstruction:
+          "You are an environmental health physician and urban air quality engineer advising families. Ground every time window and precaution in the exact hourly AQI/PM2.5/NO2 numbers supplied. Never fabricate sensor readings or use generic fluff.",
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            summary: { type: Type.STRING },
+            maskGuidance: { type: Type.STRING },
+            ventilationAdvice: { type: Type.STRING },
+            estimatedExposureReductionPct: { type: Type.INTEGER },
+            estimatedDailyCo2SavedKg: { type: Type.NUMBER },
+            dayparts: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  id: { type: Type.STRING },
+                  label: { type: Type.STRING },
+                  timeRange: { type: Type.STRING },
+                  riskLevel: { type: Type.STRING },
+                  headline: { type: Type.STRING },
+                  steps: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        title: { type: Type.STRING },
+                        detail: { type: Type.STRING },
+                        realWorldImpact: { type: Type.STRING },
+                        category: { type: Type.STRING },
                       },
                     },
                   },
@@ -426,7 +552,7 @@ Return a crisp JSON plan with 4 dayparts (morning, midday, afternoon, evening), 
         },
       });
 
-      const parsed = JSON.parse((response.text || "{}").trim());
+      const parsed = parseJsonSafe(response.text);
       return res.json(parsed);
     } catch (err) {
       return handleGeminiError(err, res);
@@ -453,31 +579,27 @@ Provide:
 4. Three concise setup steps tailored to their home type and stove.
 `;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-4-hydrogen",
+      const response = await generateWithFallback(ai, {
         contents: prompt,
-        config: {
-          systemInstruction:
-            "You are an indoor environmental quality engineer. Output concise, realistic, quantitative engineering guidance in JSON.",
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              tailoredSummary: { type: Type.STRING },
-              estimatedIndoorDropUgM3: { type: Type.NUMBER },
-              healthPayoffTimeline: { type: Type.STRING },
-              annualEmissionsImpact: { type: Type.STRING },
-              customSteps: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-              },
+        systemInstruction:
+          "You are an indoor environmental quality engineer. Output concise, realistic, quantitative engineering guidance in JSON.",
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            tailoredSummary: { type: Type.STRING },
+            estimatedIndoorDropUgM3: { type: Type.NUMBER },
+            healthPayoffTimeline: { type: Type.STRING },
+            annualEmissionsImpact: { type: Type.STRING },
+            customSteps: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
             },
           },
         },
       });
 
-      const parsed = JSON.parse((response.text || "{}").trim());
+      const parsed = parseJsonSafe(response.text);
       return res.json(parsed);
     } catch (err) {
       return handleGeminiError(err, res);
@@ -507,6 +629,7 @@ Always ground recommendations in their exact local numbers above, state concrete
 
       const recentHistory = Array.isArray(history)
         ? history
+            .filter((h: { text?: string }) => Boolean(h?.text?.trim()))
             .slice(-6)
             .map((h: { role: string; text: string }) => `${h.role === "user" ? "Parent" : "Advisor"}: ${h.text}`)
             .join("\n")
@@ -516,28 +639,24 @@ Always ground recommendations in their exact local numbers above, state concrete
         ? `Previous Conversation:\n${recentHistory}\n\nParent's Question: ${message}`
         : message;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-4-hydrogen",
+      const response = await generateWithFallback(ai, {
         contents: fullPrompt,
-        config: {
-          systemInstruction,
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              answer: { type: Type.STRING },
-              keyActions: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-              },
-              realWorldImpact: { type: Type.STRING },
+        systemInstruction,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            answer: { type: Type.STRING },
+            keyActions: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
             },
+            realWorldImpact: { type: Type.STRING },
           },
         },
       });
 
-      const parsed = JSON.parse((response.text || "{}").trim());
+      const parsed = parseJsonSafe(response.text);
       return res.json(parsed);
     } catch (err) {
       return handleGeminiError(err, res);
@@ -572,6 +691,7 @@ Respond in plain, concise prose (no markdown bolding ** or headers #). Give imme
 
       const recentHistory = Array.isArray(history)
         ? history
+            .filter((h: { text?: string }) => Boolean(h?.text?.trim()))
             .slice(-8)
             .map((h: { role: string; text: string }) => `${h.role === "user" ? "Parent" : "Advisor"}: ${h.text}`)
             .join("\n")
@@ -581,26 +701,18 @@ Respond in plain, concise prose (no markdown bolding ** or headers #). Give imme
         ? `Previous Conversation:\n${recentHistory}\n\nParent's Question: ${message}`
         : message;
 
-      const stream = await ai.models.generateContentStream({
-        model: "gemini-4-hydrogen",
-        contents: fullPrompt,
-        config: {
-          systemInstruction,
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-        },
-      });
-
-      for await (const chunk of stream) {
-        const text = chunk.text;
-        if (text) {
+      await streamWithFallback(
+        ai,
+        { contents: fullPrompt, systemInstruction },
+        (text) => {
           res.write(`data: ${JSON.stringify({ chunk: text })}\n\n`);
         }
-      }
+      );
+
       res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
       res.end();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Streaming chat failed";
-      res.write(`data: ${JSON.stringify({ error: msg })}\n\n`);
+      res.write(`data: ${JSON.stringify({ error: formatReadableGeminiError(err) })}\n\n`);
       res.end();
     }
   });
@@ -702,7 +814,7 @@ Keep spoken answers clear, practical, under 3 sentences per turn, and always ref
                   clientWs.send(
                     JSON.stringify({
                       type: "error",
-                      error: err instanceof Error ? err.message : "Live voice session error",
+                      error: formatReadableGeminiError(err),
                     })
                   );
                 }
@@ -736,7 +848,7 @@ Keep spoken answers clear, practical, under 3 sentences per turn, and always ref
           clientWs.send(
             JSON.stringify({
               type: "error",
-              error: err instanceof Error ? err.message : "Failed to initialize live AI session",
+              error: formatReadableGeminiError(err),
             })
           );
         }

@@ -1,8 +1,34 @@
-export function float32ToPcm16Base64(float32: Float32Array): string {
-  const buffer = new ArrayBuffer(float32.length * 2);
+export function resampleFloat32(
+  input: Float32Array,
+  inputSampleRate: number,
+  targetSampleRate: number
+): Float32Array {
+  if (inputSampleRate === targetSampleRate || inputSampleRate <= 0 || targetSampleRate <= 0) {
+    return input;
+  }
+  const ratio = inputSampleRate / targetSampleRate;
+  const outputLength = Math.max(1, Math.floor(input.length / ratio));
+  const output = new Float32Array(outputLength);
+  for (let i = 0; i < outputLength; i++) {
+    const srcIndex = i * ratio;
+    const low = Math.floor(srcIndex);
+    const high = Math.min(low + 1, input.length - 1);
+    const frac = srcIndex - low;
+    output[i] = input[low] * (1 - frac) + input[high] * frac;
+  }
+  return output;
+}
+
+export function float32ToPcm16Base64(
+  float32: Float32Array,
+  inputSampleRate = 16000,
+  targetSampleRate = 16000
+): string {
+  const samples = resampleFloat32(float32, inputSampleRate, targetSampleRate);
+  const buffer = new ArrayBuffer(samples.length * 2);
   const view = new DataView(buffer);
-  for (let i = 0; i < float32.length; i++) {
-    const s = Math.max(-1, Math.min(1, float32[i]));
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
     view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
   }
   const bytes = new Uint8Array(buffer);
@@ -21,7 +47,11 @@ export class Pcm24kPlayer {
 
   private ensureContext(): AudioContext {
     if (!this.ctx || this.ctx.state === "closed") {
-      this.ctx = new AudioContext({ sampleRate: 24000 });
+      try {
+        this.ctx = new AudioContext({ sampleRate: 24000 });
+      } catch {
+        this.ctx = new AudioContext();
+      }
       this.nextStartTime = this.ctx.currentTime;
     }
     if (this.ctx.state === "suspended") {

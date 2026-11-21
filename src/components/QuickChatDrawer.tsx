@@ -19,6 +19,7 @@ interface QuickChatDrawerProps {
   messages: ChatMessage[];
   onAddMessages: (newMsgs: ChatMessage[]) => void;
   onUpdateMessage: (id: string, text: string) => void;
+  onRemoveMessage?: (id: string) => void;
 }
 
 const QUICK_PROMPTS = [
@@ -38,6 +39,7 @@ export const QuickChatDrawer: React.FC<QuickChatDrawerProps> = ({
   messages,
   onAddMessages,
   onUpdateMessage,
+  onRemoveMessage,
 }) => {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -70,7 +72,7 @@ export const QuickChatDrawer: React.FC<QuickChatDrawerProps> = ({
 
   const handleSend = async (promptText: string) => {
     const trimmed = promptText.trim();
-    if (!trimmed || streaming || !airQuality) return;
+    if (!trimmed || streaming) return;
 
     setError(null);
     const nowTime = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -88,7 +90,9 @@ export const QuickChatDrawer: React.FC<QuickChatDrawerProps> = ({
       timestamp: nowTime,
     };
 
-    const historySnapshot = messages.map((m) => ({ role: m.role, text: m.text }));
+    const historySnapshot = messages
+      .filter((m) => m.text.trim().length > 0)
+      .map((m) => ({ role: m.role, text: m.text }));
     onAddMessages([userMsg, placeholder]);
     setInput("");
     setStreaming(true);
@@ -110,8 +114,8 @@ export const QuickChatDrawer: React.FC<QuickChatDrawerProps> = ({
           history: historySnapshot,
           context: {
             locationName: `${selectedCity.name}, ${selectedCity.country}`,
-            current: airQuality.current,
-            ventilationWindow: airQuality.ventilationWindow,
+            current: airQuality?.current,
+            ventilationWindow: airQuality?.ventilationWindow,
             familySummary,
             activeHacks: activeHackIds,
             adoptedSwaps: adoptedSwapIds,
@@ -122,8 +126,17 @@ export const QuickChatDrawer: React.FC<QuickChatDrawerProps> = ({
             accumulated += chunk;
             onUpdateMessage(assistantId, accumulated);
           },
-          onDone: () => setStreaming(false),
+          onDone: () => {
+            if (!accumulated.trim()) {
+              onRemoveMessage?.(assistantId);
+              setError("The AI advisor returned an empty response. Please try again.");
+            }
+            setStreaming(false);
+          },
           onError: (errMsg) => {
+            if (!accumulated.trim()) {
+              onRemoveMessage?.(assistantId);
+            }
             setError(errMsg);
             setStreaming(false);
           },
@@ -131,6 +144,9 @@ export const QuickChatDrawer: React.FC<QuickChatDrawerProps> = ({
         controller.signal
       );
     } catch (err) {
+      if (!accumulated.trim()) {
+        onRemoveMessage?.(assistantId);
+      }
       if ((err as Error)?.name !== "AbortError") {
         setError(err instanceof Error ? err.message : "Streaming chat failed.");
       }
@@ -170,7 +186,7 @@ export const QuickChatDrawer: React.FC<QuickChatDrawerProps> = ({
                 <button
                   key={q}
                   type="button"
-                  disabled={!airQuality || streaming}
+                  disabled={streaming}
                   onClick={() => void handleSend(q)}
                   className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-teal-700 disabled:opacity-50"
                 >
@@ -240,7 +256,6 @@ export const QuickChatDrawer: React.FC<QuickChatDrawerProps> = ({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Ask ClearAir AI..."
-            disabled={!airQuality}
             className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-900 placeholder:text-slate-500 focus:border-teal-700 focus:outline-none"
           />
           {streaming ? (
@@ -258,7 +273,7 @@ export const QuickChatDrawer: React.FC<QuickChatDrawerProps> = ({
           ) : (
             <button
               type="submit"
-              disabled={!input.trim() || !airQuality}
+              disabled={!input.trim()}
               className="min-h-[38px] min-w-[38px] flex items-center justify-center rounded-lg bg-teal-700 p-2 text-white hover:bg-teal-800 focus-visible:outline-2 focus-visible:outline-teal-700 disabled:opacity-50"
               aria-label="Send message"
             >

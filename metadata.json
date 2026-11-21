@@ -1,6 +1,11 @@
 {
   "name": "ClearAir Family",
   "description": "GenAI-powered Urban Air Quality Assistant helping families beat severe pollution with tailored low-emission routines, indoor air quality hacks, sustainable swaps, and personalized long-term health tracking.",
-  "requestFramePermissions": ["geolocation", "microphone"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "requestFramePermissions": [
+    "geolocation",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

@@ -19,6 +19,7 @@ interface AssistantViewProps {
   messages: ChatMessage[];
   onAddMessages: (newMsgs: ChatMessage[]) => void;
   onUpdateMessage: (id: string, text: string) => void;
+  onRemoveMessage?: (id: string) => void;
   onClearMessages: () => void;
 }
 
@@ -31,6 +32,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
   messages,
   onAddMessages,
   onUpdateMessage,
+  onRemoveMessage,
   onClearMessages,
 }) => {
   const [input, setInput] = useState("");
@@ -66,7 +68,6 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
   }, []);
 
   const buildContext = () => {
-    if (!airQuality) return null;
     const familySummary = `${familyProfile.householdName} (${familyProfile.homeType}, ${
       familyProfile.stoveType
     }, ${familyProfile.purifierCount} purifiers, ${familyProfile.primaryCommute}). Members: ${familyProfile.members
@@ -75,8 +76,8 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
 
     return {
       locationName: `${selectedCity.name}, ${selectedCity.country}`,
-      current: airQuality.current,
-      ventilationWindow: airQuality.ventilationWindow,
+      current: airQuality?.current,
+      ventilationWindow: airQuality?.ventilationWindow,
       familySummary,
       activeHacks: activeHackIds,
       adoptedSwaps: adoptedSwapIds,
@@ -85,11 +86,28 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
 
   const handleStreamSend = async (promptText: string) => {
     const trimmed = promptText.trim();
-    const context = buildContext();
-    if (!trimmed || streaming || !context) return;
+    if (!trimmed || streaming) return;
 
-    setError(null);
     const nowTime = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+    // If a live voice WebSocket session is active, send typed text directly into the live session
+    if (voiceState === "live" && wsRef.current?.readyState === WebSocket.OPEN) {
+      setError(null);
+      onAddMessages([
+        {
+          id: `u-${Date.now()}`,
+          role: "user",
+          text: trimmed,
+          timestamp: nowTime,
+        },
+      ]);
+      setInput("");
+      wsRef.current.send(JSON.stringify({ type: "text", text: trimmed }));
+      return;
+    }
+
+    const context = buildContext();
+    setError(null);
     const userMsg: ChatMessage = {
       id: `u-${Date.now()}`,
       role: "user",
@@ -104,10 +122,12 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
       timestamp: nowTime,
     };
 
-    const historySnapshot = [...messages, userMsg].map((m) => ({
-      role: m.role,
-      text: m.text,
-    }));
+    const historySnapshot = messages
+      .filter((m) => m.text.trim().length > 0)
+      .map((m) => ({
+        role: m.role,
+        text: m.text,
+      }));
 
     onAddMessages([userMsg, placeholderMsg]);
     setInput("");
@@ -121,7 +141,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
       await streamAssistantChat(
         {
           message: trimmed,
-          history: historySnapshot.slice(0, -1),
+          history: historySnapshot,
           context,
         },
         {
@@ -130,9 +150,16 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
             onUpdateMessage(assistantMsgId, accumulated);
           },
           onDone: () => {
+            if (!accumulated.trim()) {
+              onRemoveMessage?.(assistantMsgId);
+              setError("The AI advisor returned an empty response. Please try again.");
+            }
             setStreaming(false);
           },
           onError: (errMsg) => {
+            if (!accumulated.trim()) {
+              onRemoveMessage?.(assistantMsgId);
+            }
             setError(errMsg);
             setStreaming(false);
           },
@@ -140,6 +167,9 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
         controller.signal
       );
     } catch (err) {
+      if (!accumulated.trim()) {
+        onRemoveMessage?.(assistantMsgId);
+      }
       if ((err as Error)?.name !== "AbortError") {
         setError(err instanceof Error ? err.message : "Real-time chat stream failed.");
       }
@@ -176,8 +206,13 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
   };
 
   const startVoiceSession = async () => {
+    if (voiceState !== "idle") return;
     const context = buildContext();
-    if (!context || voiceState !== "idle") return;
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setError("Live voice requires microphone access in a secure browser context. You can still chat via real-time text below.");
+      return;
+    }
 
     setError(null);
     setVoiceState("connecting");
@@ -185,8 +220,18 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       micStreamRef.current = stream;
-      const micCtx = new AudioContext({ sampleRate: 16000 });
+
+      let micCtx: AudioContext;
+      try {
+        micCtx = new AudioContext({ sampleRate: 16000 });
+      } catch {
+        micCtx = new AudioContext();
+      }
+      if (micCtx.state === "suspended") {
+        await micCtx.resume();
+      }
       micCtxRef.current = micCtx;
+
       const player = new Pcm24kPlayer();
       playerRef.current = player;
 
@@ -214,7 +259,11 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
 
           processor.onaudioprocess = (e) => {
             if (ws.readyState === WebSocket.OPEN) {
-              const base64 = float32ToPcm16Base64(e.inputBuffer.getChannelData(0));
+              const base64 = float32ToPcm16Base64(
+                e.inputBuffer.getChannelData(0),
+                micCtx.sampleRate,
+                16000
+              );
               ws.send(JSON.stringify({ type: "audio", audio: base64 }));
             }
           };
@@ -323,9 +372,8 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
               {voiceState === "idle" ? (
                 <button
                   type="button"
-                  disabled={!airQuality}
                   onClick={() => void startVoiceSession()}
-                  className="flex w-full items-center gap-2 rounded-lg bg-teal-700 px-3 py-2.5 text-left text-xs font-semibold text-white transition-colors hover:bg-teal-800 disabled:opacity-50"
+                  className="flex w-full items-center gap-2 rounded-lg bg-teal-700 px-3 py-2.5 text-left text-xs font-semibold text-white transition-colors hover:bg-teal-800"
                 >
                   <Mic className="h-4 w-4 shrink-0" />
                   <span>Start Live Voice Chat</span>
@@ -359,7 +407,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
                   <li key={topic.id}>
                     <button
                       type="button"
-                      disabled={streaming || !airQuality}
+                      disabled={streaming}
                       aria-pressed={isSelected}
                       onClick={() => {
                         setSelectedTopicId(topic.id);
@@ -498,8 +546,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder={`Message ClearAir Advisor in real time about ${selectedCity.name}...`}
-            disabled={!airQuality}
-            className="flex-1 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-500 focus:border-teal-700 focus:outline-none disabled:bg-slate-50"
+            className="flex-1 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-500 focus:border-teal-700 focus:outline-none"
           />
 
           {streaming ? (
@@ -517,7 +564,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
           ) : (
             <button
               type="submit"
-              disabled={!input.trim() || !airQuality}
+              disabled={!input.trim()}
               className="flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-teal-800 disabled:opacity-50 whitespace-nowrap shrink-0"
             >
               <Send className="h-4 w-4" />

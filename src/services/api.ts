@@ -63,8 +63,8 @@ export async function sendAssistantMessage(payload: {
   history: Array<{ role: "user" | "assistant"; text: string }>;
   context: {
     locationName: string;
-    current: LocalAirQualityData["current"];
-    ventilationWindow: LocalAirQualityData["ventilationWindow"];
+    current?: LocalAirQualityData["current"];
+    ventilationWindow?: LocalAirQualityData["ventilationWindow"];
     familySummary: string;
     activeHacks: string[];
     adoptedSwaps: string[];
@@ -84,8 +84,8 @@ export async function streamAssistantChat(
     history: Array<{ role: "user" | "assistant"; text: string }>;
     context: {
       locationName: string;
-      current: LocalAirQualityData["current"];
-      ventilationWindow: LocalAirQualityData["ventilationWindow"];
+      current?: LocalAirQualityData["current"];
+      ventilationWindow?: LocalAirQualityData["ventilationWindow"];
       familySummary: string;
       activeHacks: string[];
       adoptedSwaps: string[];

@@ -10,6 +10,7 @@ import {
   getSeverityStyle,
   summarizeLongTermHealth,
 } from "../src/utils/healthCalculations";
+import { float32ToPcm16Base64, resampleFloat32 } from "../src/utils/liveAudio";
 
 describe("Environmental Health & Longitudinal Exposure Calculations", () => {
   it("computes stronger PM2.5 and NO2 protection as hacks and swaps are enabled", () => {
@@ -97,6 +98,16 @@ describe("Environmental Health & Longitudinal Exposure Calculations", () => {
     assert.equal(getAqiCategory(165).severity, "unhealthy");
     assert.equal(getAqiCategory(240).severity, "severe");
     assert.equal(getSeverityStyle("severe").label, "Severe Pollution");
+  });
+
+  it("resamples microphone audio to 16kHz PCM16 base64 cleanly", () => {
+    const input48k = new Float32Array(4800).fill(0.5);
+    const resampled = resampleFloat32(input48k, 48000, 16000);
+    assert.equal(resampled.length, 1600);
+
+    const b64 = float32ToPcm16Base64(input48k, 48000, 16000);
+    const decodedBytes = Buffer.from(b64, "base64");
+    assert.equal(decodedBytes.byteLength, 3200);
   });
 });
 
