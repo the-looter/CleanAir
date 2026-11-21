@@ -113,21 +113,13 @@ export async function streamAssistantChat(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let completed = false;
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    const lines = buffer.split("\n\n");
-    buffer = lines.pop() ?? "";
-
-    for (const block of lines) {
-      const dataLine = block
-        .split("\n")
-        .find((l) => l.startsWith("data: "));
-      if (!dataLine) continue;
-      const jsonStr = dataLine.slice(6);
+  const processBlock = (block: string) => {
+    for (const line of block.split("\n")) {
+      if (!line.startsWith("data: ")) continue;
+      const jsonStr = line.slice(6).trim();
+      if (!jsonStr) continue;
       try {
         const parsed = JSON.parse(jsonStr) as {
           chunk?: string;
@@ -135,6 +127,7 @@ export async function streamAssistantChat(
           error?: string;
         };
         if (parsed.error) {
+          completed = true;
           callbacks.onError(parsed.error);
           return;
         }
@@ -142,13 +135,35 @@ export async function streamAssistantChat(
           callbacks.onChunk(parsed.chunk);
         }
         if (parsed.done) {
+          completed = true;
           callbacks.onDone();
           return;
         }
       } catch {
-        // Ignore partial chunk JSON lines
+        // Ignore partial or non-JSON comment lines
       }
     }
+  };
+
+  while (!completed) {
+    const { value, done } = await reader.read();
+    if (value) {
+      buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, "\n");
+      const blocks = buffer.split("\n\n");
+      buffer = blocks.pop() ?? "";
+      for (const block of blocks) {
+        processBlock(block);
+        if (completed) return;
+      }
+    }
+    if (done) {
+      if (buffer.trim()) {
+        processBlock(buffer);
+      }
+      if (!completed) {
+        callbacks.onDone();
+      }
+      return;
+    }
   }
-  callbacks.onDone();
 }

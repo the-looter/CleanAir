@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { AlertCircle, Send, Square, X } from "lucide-react";
-import { streamAssistantChat } from "../services/api";
+import { sendAssistantMessage, streamAssistantChat } from "../services/api";
 import {
   ChatMessage,
   CityLocation,
@@ -106,20 +106,48 @@ export const QuickChatDrawer: React.FC<QuickChatDrawerProps> = ({
     const controller = new AbortController();
     abortRef.current = controller;
     let accumulated = "";
+    let streamErroredMsg: string | null = null;
+    const chatContext = {
+      locationName: `${selectedCity.name}, ${selectedCity.country}`,
+      current: airQuality?.current,
+      ventilationWindow: airQuality?.ventilationWindow,
+      familySummary,
+      activeHacks: activeHackIds,
+      adoptedSwaps: adoptedSwapIds,
+    };
+
+    const tryFallbackJson = async (): Promise<boolean> => {
+      try {
+        const res = await sendAssistantMessage({
+          message: trimmed,
+          history: historySnapshot,
+          context: chatContext,
+        });
+        const formatted = [
+          res.answer,
+          ...(res.keyActions || []).map((a) => `- ${a}`),
+          res.realWorldImpact ? `Real-World Impact: ${res.realWorldImpact}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+        if (formatted.trim()) {
+          onUpdateMessage(assistantId, formatted);
+          setError(null);
+          return true;
+        }
+      } catch (fallbackErr) {
+        streamErroredMsg =
+          fallbackErr instanceof Error ? fallbackErr.message : streamErroredMsg;
+      }
+      return false;
+    };
 
     try {
       await streamAssistantChat(
         {
           message: trimmed,
           history: historySnapshot,
-          context: {
-            locationName: `${selectedCity.name}, ${selectedCity.country}`,
-            current: airQuality?.current,
-            ventilationWindow: airQuality?.ventilationWindow,
-            familySummary,
-            activeHacks: activeHackIds,
-            adoptedSwaps: adoptedSwapIds,
-          },
+          context: chatContext,
         },
         {
           onChunk: (chunk) => {
@@ -127,29 +155,40 @@ export const QuickChatDrawer: React.FC<QuickChatDrawerProps> = ({
             onUpdateMessage(assistantId, accumulated);
           },
           onDone: () => {
-            if (!accumulated.trim()) {
-              onRemoveMessage?.(assistantId);
-              setError("The AI advisor returned an empty response. Please try again.");
-            }
-            setStreaming(false);
+            // Handled below
           },
           onError: (errMsg) => {
-            if (!accumulated.trim()) {
-              onRemoveMessage?.(assistantId);
-            }
-            setError(errMsg);
-            setStreaming(false);
+            streamErroredMsg = errMsg;
           },
         },
         controller.signal
       );
-    } catch (err) {
+
       if (!accumulated.trim()) {
-        onRemoveMessage?.(assistantId);
+        const recovered = controller.signal.aborted ? false : await tryFallbackJson();
+        if (!recovered) {
+          onRemoveMessage?.(assistantId);
+          setError(streamErroredMsg || "The AI advisor returned an empty response. Please try again.");
+        }
+      } else if (streamErroredMsg) {
+        setError(streamErroredMsg);
       }
-      if ((err as Error)?.name !== "AbortError") {
-        setError(err instanceof Error ? err.message : "Streaming chat failed.");
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") {
+        if (!accumulated.trim()) {
+          onRemoveMessage?.(assistantId);
+        }
+      } else {
+        const recovered = accumulated.trim() ? true : await tryFallbackJson();
+        if (!recovered) {
+          onRemoveMessage?.(assistantId);
+          setError(
+            streamErroredMsg ||
+              (err instanceof Error ? err.message : "Streaming chat failed.")
+          );
+        }
       }
+    } finally {
       setStreaming(false);
     }
   };
@@ -207,6 +246,9 @@ export const QuickChatDrawer: React.FC<QuickChatDrawerProps> = ({
           {messages.map((msg, idx) => {
             const isLastStreaming =
               streaming && idx === messages.length - 1 && msg.role === "assistant";
+            if (!msg.text.trim() && !isLastStreaming) {
+              return null;
+            }
             return (
               <div
                 key={msg.id}

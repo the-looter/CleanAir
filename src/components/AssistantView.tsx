@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { AlertCircle, Mic, MicOff, Send, Square } from "lucide-react";
 import { ASSISTANT_TOPICS } from "../data/knowledgeBase";
-import { streamAssistantChat } from "../services/api";
+import { sendAssistantMessage, streamAssistantChat } from "../services/api";
 import {
   ChatMessage,
   CityLocation,
@@ -136,6 +136,33 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
     const controller = new AbortController();
     abortRef.current = controller;
     let accumulated = "";
+    let streamErroredMsg: string | null = null;
+
+    const tryFallbackJson = async (): Promise<boolean> => {
+      try {
+        const res = await sendAssistantMessage({
+          message: trimmed,
+          history: historySnapshot,
+          context,
+        });
+        const formatted = [
+          res.answer,
+          ...(res.keyActions || []).map((a) => `- ${a}`),
+          res.realWorldImpact ? `Real-World Impact: ${res.realWorldImpact}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+        if (formatted.trim()) {
+          onUpdateMessage(assistantMsgId, formatted);
+          setError(null);
+          return true;
+        }
+      } catch (fallbackErr) {
+        streamErroredMsg =
+          fallbackErr instanceof Error ? fallbackErr.message : streamErroredMsg;
+      }
+      return false;
+    };
 
     try {
       await streamAssistantChat(
@@ -150,29 +177,40 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
             onUpdateMessage(assistantMsgId, accumulated);
           },
           onDone: () => {
-            if (!accumulated.trim()) {
-              onRemoveMessage?.(assistantMsgId);
-              setError("The AI advisor returned an empty response. Please try again.");
-            }
-            setStreaming(false);
+            // Handled below after await resolves
           },
           onError: (errMsg) => {
-            if (!accumulated.trim()) {
-              onRemoveMessage?.(assistantMsgId);
-            }
-            setError(errMsg);
-            setStreaming(false);
+            streamErroredMsg = errMsg;
           },
         },
         controller.signal
       );
-    } catch (err) {
+
       if (!accumulated.trim()) {
-        onRemoveMessage?.(assistantMsgId);
+        const recovered = controller.signal.aborted ? false : await tryFallbackJson();
+        if (!recovered) {
+          onRemoveMessage?.(assistantMsgId);
+          setError(streamErroredMsg || "The AI advisor returned an empty response. Please try again.");
+        }
+      } else if (streamErroredMsg) {
+        setError(streamErroredMsg);
       }
-      if ((err as Error)?.name !== "AbortError") {
-        setError(err instanceof Error ? err.message : "Real-time chat stream failed.");
+    } catch (err) {
+      if ((err as Error)?.name === "AbortError") {
+        if (!accumulated.trim()) {
+          onRemoveMessage?.(assistantMsgId);
+        }
+      } else {
+        const recovered = accumulated.trim() ? true : await tryFallbackJson();
+        if (!recovered) {
+          onRemoveMessage?.(assistantMsgId);
+          setError(
+            streamErroredMsg ||
+              (err instanceof Error ? err.message : "Real-time chat stream failed.")
+          );
+        }
       }
+    } finally {
       setStreaming(false);
     }
   };
@@ -491,6 +529,9 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
             messages.map((msg, idx) => {
               const isLastStreaming =
                 streaming && idx === messages.length - 1 && msg.role === "assistant";
+              if (!msg.text.trim() && !isLastStreaming) {
+                return null;
+              }
               return (
                 <div
                   key={msg.id}

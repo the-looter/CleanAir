@@ -44,6 +44,14 @@ export function getAqiCategory(aqi: number): { label: string; severity: "good" |
 }
 
 const TEXT_MODEL_CHAIN = ["gemini-4-hydrogen", "gemini-3.1-flash-lite"] as const;
+let hydrogenCooldownUntil = 0;
+
+function getActiveTextModels(): Array<(typeof TEXT_MODEL_CHAIN)[number]> {
+  if (Date.now() < hydrogenCooldownUntil) {
+    return ["gemini-3.1-flash-lite"];
+  }
+  return [...TEXT_MODEL_CHAIN];
+}
 
 function extractErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -113,9 +121,10 @@ async function generateWithFallback(
   }
 ) {
   let lastError: unknown;
-  for (const model of TEXT_MODEL_CHAIN) {
+  const models = getActiveTextModels();
+  for (const model of models) {
     try {
-      const timeoutMs = model === "gemini-4-hydrogen" ? 9000 : 15000;
+      const timeoutMs = model === "gemini-4-hydrogen" ? 4500 : 15000;
       const config: Record<string, unknown> = {
         systemInstruction: params.systemInstruction,
         abortSignal: AbortSignal.timeout(timeoutMs),
@@ -137,6 +146,9 @@ async function generateWithFallback(
     } catch (err) {
       lastError = err;
       console.warn(`[Gemini generateWithFallback] ${model} failed:`, extractErrorMessage(err));
+      if (model === "gemini-4-hydrogen" && isTransientCapacityError(err)) {
+        hydrogenCooldownUntil = Date.now() + 3 * 60 * 1000;
+      }
       if (isTransientCapacityError(err)) {
         continue;
       }
@@ -155,10 +167,11 @@ async function streamWithFallback(
   onChunk: (text: string) => void
 ) {
   let lastError: unknown;
-  for (const model of TEXT_MODEL_CHAIN) {
+  const models = getActiveTextModels();
+  for (const model of models) {
     let emittedAny = false;
     try {
-      const timeoutMs = model === "gemini-4-hydrogen" ? 9000 : 15000;
+      const timeoutMs = model === "gemini-4-hydrogen" ? 3500 : 15000;
       const config: Record<string, unknown> = {
         systemInstruction: params.systemInstruction,
         abortSignal: AbortSignal.timeout(timeoutMs),
@@ -184,6 +197,9 @@ async function streamWithFallback(
     } catch (err) {
       lastError = err;
       console.warn(`[Gemini streamWithFallback] ${model} failed:`, extractErrorMessage(err));
+      if (model === "gemini-4-hydrogen" && !emittedAny) {
+        hydrogenCooldownUntil = Date.now() + 3 * 60 * 1000;
+      }
       if (!emittedAny && (isTransientCapacityError(err) || extractErrorMessage(err).includes("Empty response stream"))) {
         continue;
       }
@@ -670,10 +686,19 @@ Always ground recommendations in their exact local numbers above, state concrete
       return res.status(400).json({ error: "A message string is required." });
     }
 
+    res.socket?.setNoDelay?.(true);
     res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
     res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders?.();
+    res.write(": stream-open\n\n");
+
+    const keepalive = setInterval(() => {
+      if (!res.writableEnded) {
+        res.write(": ping\n\n");
+      }
+    }, 2000);
 
     try {
       const ai = getGeminiClient();
@@ -705,15 +730,23 @@ Respond in plain, concise prose (no markdown bolding ** or headers #). Give imme
         ai,
         { contents: fullPrompt, systemInstruction },
         (text) => {
-          res.write(`data: ${JSON.stringify({ chunk: text })}\n\n`);
+          if (!res.writableEnded) {
+            res.write(`data: ${JSON.stringify({ chunk: text })}\n\n`);
+          }
         }
       );
 
-      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
-      res.end();
+      if (!res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+        res.end();
+      }
     } catch (err) {
-      res.write(`data: ${JSON.stringify({ error: formatReadableGeminiError(err) })}\n\n`);
-      res.end();
+      if (!res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ error: formatReadableGeminiError(err) })}\n\n`);
+        res.end();
+      }
+    } finally {
+      clearInterval(keepalive);
     }
   });
 
