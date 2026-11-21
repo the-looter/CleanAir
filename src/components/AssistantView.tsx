@@ -1,13 +1,14 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle, Mic, MicOff, Send, Square } from "lucide-react";
 import { ASSISTANT_TOPICS } from "../data/knowledgeBase";
-import { sendAssistantMessage, streamAssistantChat } from "../services/api";
+import { useStreamingChat } from "../hooks/useStreamingChat";
 import {
   ChatMessage,
   CityLocation,
   FamilyProfile,
   LocalAirQualityData,
 } from "../types";
+import { buildAssistantContext } from "../utils/chatHelpers";
 import { float32ToPcm16Base64, Pcm24kPlayer } from "../utils/liveAudio";
 
 interface AssistantViewProps {
@@ -37,185 +38,35 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
 }) => {
   const [input, setInput] = useState("");
   const [selectedTopicId, setSelectedTopicId] = useState<string>(ASSISTANT_TOPICS[0].id);
-  const [streaming, setStreaming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Real-Time Voice Live API state
   const [voiceState, setVoiceState] = useState<"idle" | "connecting" | "live">("idle");
+
+  const { streaming, error, setError, sendMessage, stopStreaming } = useStreamingChat({
+    selectedCity,
+    airQuality,
+    familyProfile,
+    activeHackIds,
+    adoptedSwapIds,
+    messages,
+    onAddMessages,
+    onUpdateMessage,
+    onRemoveMessage,
+    idPrefix: "chat",
+  });
+
   const wsRef = useRef<WebSocket | null>(null);
   const micCtxRef = useRef<AudioContext | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const playerRef = useRef<Pcm24kPlayer | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
   const feedEndRef = useRef<HTMLDivElement | null>(null);
+  const isMountedRef = useRef(true);
 
   const liveInputMsgIdRef = useRef<string | null>(null);
   const liveInputTextRef = useRef<string>("");
   const liveOutputMsgIdRef = useRef<string | null>(null);
   const liveOutputTextRef = useRef<string>("");
 
-  useEffect(() => {
-    feedEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, streaming]);
-
-  useEffect(() => {
-    return () => {
-      abortRef.current?.abort();
-      stopVoiceSession();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const buildContext = () => {
-    const familySummary = `${familyProfile.householdName} (${familyProfile.homeType}, ${
-      familyProfile.stoveType
-    }, ${familyProfile.purifierCount} purifiers, ${familyProfile.primaryCommute}). Members: ${familyProfile.members
-      .map((m) => `${m.name} (${m.ageGroup}: ${m.sensitivities.join(", ") || "none"})`)
-      .join("; ")}`;
-
-    return {
-      locationName: `${selectedCity.name}, ${selectedCity.country}`,
-      current: airQuality?.current,
-      ventilationWindow: airQuality?.ventilationWindow,
-      familySummary,
-      activeHacks: activeHackIds,
-      adoptedSwaps: adoptedSwapIds,
-    };
-  };
-
-  const handleStreamSend = async (promptText: string) => {
-    const trimmed = promptText.trim();
-    if (!trimmed || streaming) return;
-
-    const nowTime = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-
-    // If a live voice WebSocket session is active, send typed text directly into the live session
-    if (voiceState === "live" && wsRef.current?.readyState === WebSocket.OPEN) {
-      setError(null);
-      onAddMessages([
-        {
-          id: `u-${Date.now()}`,
-          role: "user",
-          text: trimmed,
-          timestamp: nowTime,
-        },
-      ]);
-      setInput("");
-      wsRef.current.send(JSON.stringify({ type: "text", text: trimmed }));
-      return;
-    }
-
-    const context = buildContext();
-    setError(null);
-    const userMsg: ChatMessage = {
-      id: `u-${Date.now()}`,
-      role: "user",
-      text: trimmed,
-      timestamp: nowTime,
-    };
-    const assistantMsgId = `a-${Date.now() + 1}`;
-    const placeholderMsg: ChatMessage = {
-      id: assistantMsgId,
-      role: "assistant",
-      text: "",
-      timestamp: nowTime,
-    };
-
-    const historySnapshot = messages
-      .filter((m) => m.text.trim().length > 0)
-      .map((m) => ({
-        role: m.role,
-        text: m.text,
-      }));
-
-    onAddMessages([userMsg, placeholderMsg]);
-    setInput("");
-    setStreaming(true);
-
-    const controller = new AbortController();
-    abortRef.current = controller;
-    let accumulated = "";
-    let streamErroredMsg: string | null = null;
-
-    const tryFallbackJson = async (): Promise<boolean> => {
-      try {
-        const res = await sendAssistantMessage({
-          message: trimmed,
-          history: historySnapshot,
-          context,
-        });
-        const formatted = [
-          res.answer,
-          ...(res.keyActions || []).map((a) => `- ${a}`),
-          res.realWorldImpact ? `Real-World Impact: ${res.realWorldImpact}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n\n");
-        if (formatted.trim()) {
-          onUpdateMessage(assistantMsgId, formatted);
-          setError(null);
-          return true;
-        }
-      } catch (fallbackErr) {
-        streamErroredMsg =
-          fallbackErr instanceof Error ? fallbackErr.message : streamErroredMsg;
-      }
-      return false;
-    };
-
-    try {
-      await streamAssistantChat(
-        {
-          message: trimmed,
-          history: historySnapshot,
-          context,
-        },
-        {
-          onChunk: (chunk) => {
-            accumulated += chunk;
-            onUpdateMessage(assistantMsgId, accumulated);
-          },
-          onDone: () => {
-            // Handled below after await resolves
-          },
-          onError: (errMsg) => {
-            streamErroredMsg = errMsg;
-          },
-        },
-        controller.signal
-      );
-
-      if (!accumulated.trim()) {
-        const recovered = controller.signal.aborted ? false : await tryFallbackJson();
-        if (!recovered) {
-          onRemoveMessage?.(assistantMsgId);
-          setError(streamErroredMsg || "The AI advisor returned an empty response. Please try again.");
-        }
-      } else if (streamErroredMsg) {
-        setError(streamErroredMsg);
-      }
-    } catch (err) {
-      if ((err as Error)?.name === "AbortError") {
-        if (!accumulated.trim()) {
-          onRemoveMessage?.(assistantMsgId);
-        }
-      } else {
-        const recovered = accumulated.trim() ? true : await tryFallbackJson();
-        if (!recovered) {
-          onRemoveMessage?.(assistantMsgId);
-          setError(
-            streamErroredMsg ||
-              (err instanceof Error ? err.message : "Real-time chat stream failed.")
-          );
-        }
-      }
-    } finally {
-      setStreaming(false);
-    }
-  };
-
-  const stopVoiceSession = () => {
+  const stopVoiceSession = useCallback(() => {
     if (processorRef.current) {
       processorRef.current.disconnect();
       processorRef.current = null;
@@ -225,7 +76,11 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
       micStreamRef.current = null;
     }
     if (micCtxRef.current && micCtxRef.current.state !== "closed") {
-      void micCtxRef.current.close();
+      try {
+        void micCtxRef.current.close();
+      } catch {
+        // Ignore teardown close errors
+      }
       micCtxRef.current = null;
     }
     if (wsRef.current) {
@@ -240,17 +95,67 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
     liveInputTextRef.current = "";
     liveOutputMsgIdRef.current = null;
     liveOutputTextRef.current = "";
-    setVoiceState("idle");
+    if (isMountedRef.current) {
+      setVoiceState("idle");
+    }
+  }, []);
+
+  useEffect(() => {
+    feedEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length, streaming]);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      stopVoiceSession();
+    };
+  }, [stopVoiceSession]);
+
+  const handleSend = async (promptText: string) => {
+    const trimmed = promptText.trim();
+    if (!trimmed || streaming) return;
+
+    if (voiceState === "live" && wsRef.current?.readyState === WebSocket.OPEN) {
+      setError(null);
+      const nowTime = new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      onAddMessages([
+        {
+          id: `u-${Date.now()}`,
+          role: "user",
+          text: trimmed,
+          timestamp: nowTime,
+        },
+      ]);
+      setInput("");
+      wsRef.current.send(JSON.stringify({ type: "text", text: trimmed }));
+      return;
+    }
+
+    setInput("");
+    await sendMessage(trimmed);
   };
 
   const startVoiceSession = async () => {
     if (voiceState !== "idle") return;
-    const context = buildContext();
 
     if (!navigator.mediaDevices?.getUserMedia) {
-      setError("Live voice requires microphone access in a secure browser context. You can still chat via real-time text below.");
+      setError(
+        "Live voice requires microphone access in a secure browser context. You can still chat via real-time text below."
+      );
       return;
     }
+
+    const context = buildAssistantContext({
+      selectedCity,
+      airQuality,
+      familyProfile,
+      activeHackIds,
+      adoptedSwapIds,
+    });
 
     setError(null);
     setVoiceState("connecting");
@@ -333,7 +238,10 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
                 id: newId,
                 role: "user",
                 text: msg.text,
-                timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                timestamp: new Date().toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                }),
               },
             ]);
           } else {
@@ -355,7 +263,10 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
                 id: newId,
                 role: "assistant",
                 text: msg.text,
-                timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+                timestamp: new Date().toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                }),
               },
             ]);
           } else {
@@ -400,10 +311,10 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
       {/* Left Vertical Scenario & Live Voice Control Menu */}
-      <aside className="lg:col-span-3">
+      <nav aria-label="Advisor scenarios and voice controls" className="lg:col-span-3">
         <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-5">
           <div>
-            <div className="px-2 pb-2 text-xs font-medium text-slate-500">
+            <div className="px-2 pb-2 text-xs font-medium text-slate-600">
               Real-Time Voice Advisor
             </div>
             <div className="flex flex-col gap-1">
@@ -411,31 +322,31 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
                 <button
                   type="button"
                   onClick={() => void startVoiceSession()}
-                  className="flex w-full items-center gap-2 rounded-lg bg-teal-700 px-3 py-2.5 text-left text-xs font-semibold text-white transition-colors hover:bg-teal-800"
+                  className="min-h-[40px] flex w-full items-center gap-2 rounded-lg bg-teal-700 px-3 py-2.5 text-left text-xs font-semibold text-white transition-colors hover:bg-teal-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700"
                 >
-                  <Mic className="h-4 w-4 shrink-0" />
+                  <Mic className="h-4 w-4 shrink-0" aria-hidden="true" />
                   <span>Start Live Voice Chat</span>
                 </button>
               ) : (
                 <button
                   type="button"
                   onClick={stopVoiceSession}
-                  className="flex w-full items-center gap-2 rounded-lg bg-red-600 px-3 py-2.5 text-left text-xs font-semibold text-white transition-colors hover:bg-red-700"
+                  className="min-h-[40px] flex w-full items-center gap-2 rounded-lg bg-red-600 px-3 py-2.5 text-left text-xs font-semibold text-white transition-colors hover:bg-red-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700"
                 >
-                  <MicOff className="h-4 w-4 shrink-0" />
+                  <MicOff className="h-4 w-4 shrink-0" aria-hidden="true" />
                   <span>
                     {voiceState === "connecting" ? "Connecting Voice..." : "End Live Voice"}
                   </span>
                 </button>
               )}
-              <p className="px-1 pt-1 text-[11px] leading-relaxed text-slate-500">
+              <p className="px-1 pt-1 text-[11px] leading-relaxed text-slate-600">
                 Speak hands-free or stream text questions below; both use live {selectedCity.name} telemetry.
               </p>
             </div>
           </div>
 
           <div className="border-t border-slate-200 pt-4">
-            <div className="px-2 pb-2 text-xs font-medium text-slate-500">
+            <div className="px-2 pb-2 text-xs font-medium text-slate-600">
               Quick Scenario Prompts
             </div>
             <ul className="flex flex-col gap-1">
@@ -449,7 +360,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
                       aria-pressed={isSelected}
                       onClick={() => {
                         setSelectedTopicId(topic.id);
-                        void handleStreamSend(topic.prompt);
+                        void handleSend(topic.prompt);
                       }}
                       className={`w-full rounded-lg px-3 py-2 text-left text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-teal-700 disabled:opacity-50 ${
                         isSelected
@@ -470,23 +381,23 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
               <button
                 type="button"
                 onClick={onClearMessages}
-                className="w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                className="min-h-[36px] w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-teal-700"
               >
                 Clear Conversation
               </button>
             </div>
           )}
         </div>
-      </aside>
+      </nav>
 
       {/* Main Real-Time Streaming Conversational Interface */}
       <div className="flex min-h-[580px] flex-col rounded-xl border border-slate-200 bg-white lg:col-span-9">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 px-6 py-4">
           <div>
-            <h2 className="font-display text-base font-semibold text-slate-900">
+            <h1 className="font-display text-xl font-bold text-slate-900">
               Real-Time Urban Air Quality Advisor
-            </h2>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+            </h1>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-600">
               <span>{selectedCity.name}</span>
               <span aria-hidden="true">·</span>
               <span className="font-mono tabular-nums">
@@ -549,11 +460,14 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
                     <p className="text-sm leading-relaxed whitespace-pre-line">
                       {msg.text || (isLastStreaming ? "Thinking..." : "")}
                       {isLastStreaming && msg.text && (
-                        <span className="ml-1 inline-block h-3.5 w-1.5 animate-pulse bg-teal-700 align-middle" />
+                        <span
+                          aria-hidden="true"
+                          className="ml-1 inline-block h-3.5 w-1.5 animate-pulse bg-teal-700 align-middle"
+                        />
                       )}
                     </p>
                   </div>
-                  <span className="mt-1 font-mono text-[11px] text-slate-500">
+                  <span className="mt-1 font-mono text-[11px] text-slate-600">
                     {msg.role === "user" ? "You" : "ClearAir Advisor"} · {msg.timestamp}
                   </span>
                 </div>
@@ -562,8 +476,11 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
           )}
 
           {error && (
-            <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700"
+            >
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
               <span>{error}</span>
             </div>
           )}
@@ -574,7 +491,7 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            void handleStreamSend(input);
+            void handleSend(input);
           }}
           className="flex items-center gap-3 border-t border-slate-200 p-4"
         >
@@ -587,28 +504,25 @@ export const AssistantView: React.FC<AssistantViewProps> = ({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder={`Message ClearAir Advisor in real time about ${selectedCity.name}...`}
-            className="flex-1 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-500 focus:border-teal-700 focus:outline-none"
+            className="flex-1 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-600 focus:border-teal-700 focus:outline-none"
           />
 
           {streaming ? (
             <button
               type="button"
-              onClick={() => {
-                abortRef.current?.abort();
-                setStreaming(false);
-              }}
-              className="flex items-center gap-2 rounded-lg border border-slate-300 bg-slate-100 px-4 py-2.5 text-sm font-medium text-slate-800 hover:bg-slate-200 whitespace-nowrap shrink-0"
+              onClick={stopStreaming}
+              className="min-h-[40px] flex items-center gap-2 rounded-lg border border-slate-300 bg-slate-100 px-4 py-2.5 text-sm font-medium text-slate-800 hover:bg-slate-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 whitespace-nowrap shrink-0"
             >
-              <Square className="h-3.5 w-3.5 fill-slate-700" />
+              <Square className="h-3.5 w-3.5 fill-slate-700" aria-hidden="true" />
               <span>Stop</span>
             </button>
           ) : (
             <button
               type="submit"
               disabled={!input.trim()}
-              className="flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-teal-800 disabled:opacity-50 whitespace-nowrap shrink-0"
+              className="min-h-[40px] flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-teal-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 disabled:opacity-50 whitespace-nowrap shrink-0"
             >
-              <Send className="h-4 w-4" />
+              <Send className="h-4 w-4" aria-hidden="true" />
               <span>Send</span>
             </button>
           )}

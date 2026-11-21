@@ -33,6 +33,26 @@ const geoCache = new Map<string, { data: unknown; expiresAt: number }>();
 
 const AQ_TTL_MS = 5 * 60 * 1000;
 const GEO_TTL_MS = 30 * 60 * 1000;
+const MAX_CACHE_ENTRIES = 120;
+
+function setBoundedCache(
+  cache: Map<string, { data: unknown; expiresAt: number }>,
+  key: string,
+  data: unknown,
+  ttlMs: number
+) {
+  const now = Date.now();
+  if (cache.size >= MAX_CACHE_ENTRIES) {
+    for (const [k, v] of cache.entries()) {
+      if (v.expiresAt <= now) cache.delete(k);
+    }
+    if (cache.size >= MAX_CACHE_ENTRIES) {
+      const oldestKey = cache.keys().next().value;
+      if (oldestKey !== undefined) cache.delete(oldestKey);
+    }
+  }
+  cache.set(key, { data, expiresAt: now + ttlMs });
+}
 
 export function getAqiCategory(aqi: number): { label: string; severity: "good" | "moderate" | "unhealthy" | "severe" } {
   if (aqi <= 50) return { label: "Good", severity: "good" };
@@ -264,7 +284,7 @@ export function createApiApp() {
         timezone: r.timezone || "auto",
       }));
       const payload = { results };
-      geoCache.set(cacheKey, { data: payload, expiresAt: Date.now() + GEO_TTL_MS });
+      setBoundedCache(geoCache, cacheKey, payload, GEO_TTL_MS);
       res.setHeader("Cache-Control", "public, max-age=300");
       return res.json(payload);
     } catch (err) {
@@ -477,7 +497,7 @@ export function createApiApp() {
             dailyHistory,
           };
 
-          aqCache.set(cacheKey, { data: payload, expiresAt: Date.now() + AQ_TTL_MS });
+          setBoundedCache(aqCache, cacheKey, payload, AQ_TTL_MS);
           return payload;
         })().finally(() => {
           aqInflight.delete(cacheKey);
@@ -580,11 +600,14 @@ Return a crisp JSON plan with 4 dayparts (morning, midday, afternoon, evening), 
     try {
       const { itemTitle, itemType, baselineImpact, locationName, currentAqi, currentPm25, currentNo2, familyProfile } =
         req.body;
+      if (!itemTitle || !familyProfile) {
+        return res.status(400).json({ error: "itemTitle and familyProfile are required." });
+      }
 
       const ai = getGeminiClient();
       const prompt = `
 Analyze the real-world health and emissions impact of implementing "${itemTitle}" (${itemType}) for this specific family.
-Location: ${locationName} (Current US AQI: ${currentAqi}, Outdoor PM2.5: ${currentPm25} µg/m³, Outdoor NO2: ${currentNo2} µg/m³).
+Location: ${locationName || "City"} (Current US AQI: ${currentAqi ?? "unknown"}, Outdoor PM2.5: ${currentPm25 ?? "unknown"} µg/m³, Outdoor NO2: ${currentNo2 ?? "unknown"} µg/m³).
 Family: ${familyProfile.homeType}, ${familyProfile.stoveType} stove, ${familyProfile.purifierCount} purifiers, ${familyProfile.members?.length || 1} members (${(familyProfile.members || []).map((m: { ageGroup: string; sensitivities: string[] }) => `${m.ageGroup}: ${m.sensitivities.join("/") || "general"}`).join(", ")}).
 Reference Baseline: ${baselineImpact}
 
@@ -622,6 +645,53 @@ Provide:
     }
   });
 
+  // Shared context & conversation history builders for conversational AI endpoints
+  const buildTelemetryContextBlock = (context: {
+    locationName?: string;
+    current?: {
+      usAqi?: number;
+      category?: string;
+      pm25?: number;
+      pm10?: number;
+      no2?: number;
+      o3?: number;
+      windSpeedKmh?: number;
+      humidityPct?: number;
+      temperatureC?: number;
+    };
+    ventilationWindow?: { startTime?: string; endTime?: string; expectedPm25?: number };
+    familySummary?: string;
+    activeHacks?: string[];
+    adoptedSwaps?: string[];
+  } | undefined) => `Active Local Telemetry (${context?.locationName || "City"}):
+- US AQI: ${context?.current?.usAqi ?? "unknown"} (${context?.current?.category ?? ""})
+- PM2.5: ${context?.current?.pm25 ?? "unknown"} µg/m³ | PM10: ${context?.current?.pm10 ?? "unknown"} µg/m³ | NO2: ${context?.current?.no2 ?? "unknown"} µg/m³ | O3: ${context?.current?.o3 ?? "unknown"} µg/m³
+- Wind: ${context?.current?.windSpeedKmh ?? "unknown"} km/h | Humidity: ${context?.current?.humidityPct ?? "unknown"}% | Temp: ${context?.current?.temperatureC ?? "unknown"}°C
+- Optimal Ventilation Window: ${context?.ventilationWindow?.startTime?.slice(11, 16) || "N/A"} - ${context?.ventilationWindow?.endTime?.slice(11, 16) || "N/A"} (~${context?.ventilationWindow?.expectedPm25 ?? "N/A"} µg/m³)
+- Family Profile: ${context?.familySummary || "Urban household"}
+- Active Indoor Hacks: ${(context?.activeHacks || []).join(", ") || "None"}
+- Adopted Swaps: ${(context?.adoptedSwaps || []).join(", ") || "None"}`;
+
+  const buildChatPromptWithHistory = (
+    message: string,
+    history: unknown,
+    maxTurns: number
+  ): string => {
+    const recentHistory = Array.isArray(history)
+      ? history
+          .filter((h: { text?: string }) => Boolean(h?.text?.trim()))
+          .slice(-maxTurns)
+          .map(
+            (h: { role: string; text: string }) =>
+              `${h.role === "user" ? "Parent" : "Advisor"}: ${h.text}`
+          )
+          .join("\n")
+      : "";
+    return recentHistory
+      ? `Previous Conversation:\n${recentHistory}\n\nParent's Question: ${message}`
+      : message;
+  };
+
   // 5. GenAI Conversational Urban Air Quality Assistant
   app.post("/api/assistant/chat", async (req: Request, res: Response) => {
     try {
@@ -632,28 +702,11 @@ Provide:
 
       const ai = getGeminiClient();
       const systemInstruction = `You are ClearAir Family Assistant, a grounded urban air quality and pediatric/family respiratory health advisor.
-Active Local Telemetry (${context?.locationName || "City"}):
-- US AQI: ${context?.current?.usAqi ?? "unknown"} (${context?.current?.category ?? ""})
-- PM2.5: ${context?.current?.pm25 ?? "unknown"} µg/m³ | PM10: ${context?.current?.pm10 ?? "unknown"} µg/m³ | NO2: ${context?.current?.no2 ?? "unknown"} µg/m³ | O3: ${context?.current?.o3 ?? "unknown"} µg/m³
-- Wind: ${context?.current?.windSpeedKmh ?? "unknown"} km/h | Humidity: ${context?.current?.humidityPct ?? "unknown"}% | Temp: ${context?.current?.temperatureC ?? "unknown"}°C
-- Optimal Ventilation Window: ${context?.ventilationWindow?.startTime?.slice(11, 16) || "N/A"} - ${context?.ventilationWindow?.endTime?.slice(11, 16) || "N/A"} (~${context?.ventilationWindow?.expectedPm25 ?? "N/A"} µg/m³)
-- Family Profile: ${context?.familySummary || "Urban household"}
-- Active Indoor Hacks: ${(context?.activeHacks || []).join(", ") || "None"}
-- Adopted Swaps: ${(context?.adoptedSwaps || []).join(", ") || "None"}
+${buildTelemetryContextBlock(context)}
 
 Always ground recommendations in their exact local numbers above, state concrete real-world health/emission impacts, and keep answers concise and immediately actionable.`;
 
-      const recentHistory = Array.isArray(history)
-        ? history
-            .filter((h: { text?: string }) => Boolean(h?.text?.trim()))
-            .slice(-6)
-            .map((h: { role: string; text: string }) => `${h.role === "user" ? "Parent" : "Advisor"}: ${h.text}`)
-            .join("\n")
-        : "";
-
-      const fullPrompt = recentHistory
-        ? `Previous Conversation:\n${recentHistory}\n\nParent's Question: ${message}`
-        : message;
+      const fullPrompt = buildChatPromptWithHistory(message, history, 6);
 
       const response = await generateWithFallback(ai, {
         contents: fullPrompt,
@@ -703,28 +756,11 @@ Always ground recommendations in their exact local numbers above, state concrete
     try {
       const ai = getGeminiClient();
       const systemInstruction = `You are ClearAir Family Assistant, a grounded urban air quality and family respiratory health advisor.
-Active Local Telemetry (${context?.locationName || "City"}):
-- US AQI: ${context?.current?.usAqi ?? "unknown"} (${context?.current?.category ?? ""})
-- PM2.5: ${context?.current?.pm25 ?? "unknown"} µg/m³ | PM10: ${context?.current?.pm10 ?? "unknown"} µg/m³ | NO2: ${context?.current?.no2 ?? "unknown"} µg/m³ | O3: ${context?.current?.o3 ?? "unknown"} µg/m³
-- Wind: ${context?.current?.windSpeedKmh ?? "unknown"} km/h | Humidity: ${context?.current?.humidityPct ?? "unknown"}% | Temp: ${context?.current?.temperatureC ?? "unknown"}°C
-- Optimal Ventilation Window: ${context?.ventilationWindow?.startTime?.slice(11, 16) || "N/A"} - ${context?.ventilationWindow?.endTime?.slice(11, 16) || "N/A"} (~${context?.ventilationWindow?.expectedPm25 ?? "N/A"} µg/m³)
-- Family Profile: ${context?.familySummary || "Urban household"}
-- Active Indoor Hacks: ${(context?.activeHacks || []).join(", ") || "None"}
-- Adopted Swaps: ${(context?.adoptedSwaps || []).join(", ") || "None"}
+${buildTelemetryContextBlock(context)}
 
 Respond in plain, concise prose (no markdown bolding ** or headers #). Give immediate guidance grounded in these exact local readings, followed by 2-3 short action lines starting with "- " and a brief "Real-World Impact:" line at the end.`;
 
-      const recentHistory = Array.isArray(history)
-        ? history
-            .filter((h: { text?: string }) => Boolean(h?.text?.trim()))
-            .slice(-8)
-            .map((h: { role: string; text: string }) => `${h.role === "user" ? "Parent" : "Advisor"}: ${h.text}`)
-            .join("\n")
-        : "";
-
-      const fullPrompt = recentHistory
-        ? `Previous Conversation:\n${recentHistory}\n\nParent's Question: ${message}`
-        : message;
+      const fullPrompt = buildChatPromptWithHistory(message, history, 8);
 
       await streamWithFallback(
         ai,

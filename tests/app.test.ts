@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import http from "node:http";
+import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { createApiApp, getAqiCategory } from "../server";
 import { DEFAULT_FAMILY_PROFILE } from "../src/data/knowledgeBase";
@@ -10,6 +12,7 @@ import {
   getSeverityStyle,
   summarizeLongTermHealth,
 } from "../src/utils/healthCalculations";
+import { buildAssistantContext, formatAssistantJsonReply } from "../src/utils/chatHelpers";
 import { float32ToPcm16Base64, resampleFloat32 } from "../src/utils/liveAudio";
 
 describe("Environmental Health & Longitudinal Exposure Calculations", () => {
@@ -109,6 +112,34 @@ describe("Environmental Health & Longitudinal Exposure Calculations", () => {
     const decodedBytes = Buffer.from(b64, "base64");
     assert.equal(decodedBytes.byteLength, 3200);
   });
+
+  it("builds assistant chat context safely with or without telemetry and formats JSON replies", () => {
+    const ctx = buildAssistantContext({
+      selectedCity: {
+        id: "delhi",
+        name: "New Delhi",
+        region: "Delhi NCR",
+        country: "India",
+        lat: 28.61,
+        lon: 77.2,
+      },
+      airQuality: null,
+      familyProfile: DEFAULT_FAMILY_PROFILE,
+      activeHackIds: ["corsi-rosenthal-diy"],
+      adoptedSwapIds: [],
+    });
+    assert.equal(ctx.locationName, "New Delhi, India");
+    assert.equal(ctx.current, undefined);
+    assert.ok(ctx.familySummary.includes(DEFAULT_FAMILY_PROFILE.householdName));
+
+    const formatted = formatAssistantJsonReply({
+      answer: "Keep windows closed.",
+      keyActions: ["Run HEPA purifier", "Wear N95 outdoors"],
+      realWorldImpact: "Cuts PM2.5 exposure by 45%.",
+    });
+    assert.ok(formatted.includes("- Run HEPA purifier"));
+    assert.ok(formatted.includes("Real-World Impact: Cuts PM2.5 exposure by 45%."));
+  });
 });
 
 describe("API Route Validation, Caching & Efficiency", () => {
@@ -165,6 +196,13 @@ describe("API Route Validation, Caching & Efficiency", () => {
       body: JSON.stringify({}),
     });
     assert.equal(streamRes.status, 400);
+
+    const impactRes = await fetch(`${baseUrl}/api/assistant/impact`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(impactRes.status, 400);
   });
 
   it("fetches live Open-Meteo telemetry and serves cached hits efficiently", async () => {
@@ -188,3 +226,81 @@ describe("API Route Validation, Caching & Efficiency", () => {
     assert.ok(elapsedMs < 100, `Expected cached response <100ms, got ${elapsedMs.toFixed(1)}ms`);
   });
 });
+
+describe("Accessibility & WCAG AA Compliance Regression Checks", () => {
+  const rootDir = process.cwd();
+  const readSrc = (relPath: string) => fs.readFileSync(path.join(rootDir, relPath), "utf8");
+
+  it("sets document language, page title, skip link, and main landmark", () => {
+    const html = readSrc("index.html");
+    assert.ok(/<html\s+lang="en"/.test(html), "index.html must declare lang='en'");
+    assert.ok(/<title>.+<\/title>/.test(html), "index.html must declare a non-empty <title>");
+
+    const appTsx = readSrc("src/App.tsx");
+    assert.ok(appTsx.includes('href="#main-content"'), "App must include skip-to-main link");
+    assert.ok(appTsx.includes('<main id="main-content"'), "App must render <main id='main-content'>");
+  });
+
+  it("avoids nested <aside> landmarks inside views and labels workspace sidebar", () => {
+    const sidebar = readSrc("src/components/VerticalSidebar.tsx");
+    assert.ok(
+      sidebar.includes('<aside aria-label="Workspace sidebar"'),
+      "Workspace sidebar aside must have aria-label"
+    );
+
+    const viewFiles = [
+      "src/components/OverviewDashboard.tsx",
+      "src/components/RoutinesView.tsx",
+      "src/components/IndoorHacksView.tsx",
+      "src/components/SustainableSwapsView.tsx",
+      "src/components/AssistantView.tsx",
+      "src/components/FamilyLocationView.tsx",
+    ];
+
+    for (const file of viewFiles) {
+      const src = readSrc(file);
+      assert.equal(src.includes("<aside"), false, `${file} must not contain nested <aside>`);
+      assert.ok(src.includes("<h1"), `${file} must render a primary <h1> heading`);
+    }
+  });
+
+  it("enforces WCAG AA text contrast and accessible labels across components", () => {
+    const componentDir = path.join(rootDir, "src/components");
+    const files = fs
+      .readdirSync(componentDir)
+      .filter((f) => f.endsWith(".tsx"))
+      .map((f) => `src/components/${f}`);
+    files.push("src/App.tsx");
+
+    for (const file of files) {
+      const src = readSrc(file);
+      assert.equal(
+        /\btext-slate-[45]00\b/.test(src),
+        false,
+        `${file} should use text-slate-600 or darker for WCAG AA contrast`
+      );
+    }
+
+    const sidebar = readSrc("src/components/VerticalSidebar.tsx");
+    assert.ok(
+      sidebar.includes('aria-label="Refresh local air quality telemetry"'),
+      "Sidebar refresh icon button must have aria-label"
+    );
+    assert.ok(
+      sidebar.includes('aria-label="Close navigation menu"'),
+      "Mobile close button must have aria-label"
+    );
+
+    const modal = readSrc("src/components/CheckInModal.tsx");
+    assert.ok(
+      modal.includes('aria-labelledby="comfort-score-label"'),
+      "CheckInModal score group must be labeled via aria-labelledby instead of orphaned <label>"
+    );
+
+    const quickDrawer = readSrc("src/components/QuickChatDrawer.tsx");
+    assert.ok(quickDrawer.includes('aria-label="Close live AI chat"'));
+    assert.ok(quickDrawer.includes('aria-label="Send message"'));
+    assert.ok(quickDrawer.includes('aria-label="Stop streaming"'));
+  });
+});
+

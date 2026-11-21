@@ -25,8 +25,10 @@ export function calculateProtectionProfile(
   adoptedSwapIds: string[],
   familyProfile: FamilyProfile
 ) {
-  const activeHacks = INDOOR_HACKS.filter((h) => activeHackIds.includes(h.id));
-  const adoptedSwaps = SUSTAINABLE_SWAPS.filter((s) => adoptedSwapIds.includes(s.id));
+  const hackSet = new Set(activeHackIds);
+  const swapSet = new Set(adoptedSwapIds);
+  const activeHacks = INDOOR_HACKS.filter((h) => hackSet.has(h.id));
+  const adoptedSwaps = SUSTAINABLE_SWAPS.filter((s) => swapSet.has(s.id));
 
   // Multiplicative filtration reduction model (diminishing returns, realistic physics)
   let remainingPmFraction = 0.78; // typical unmitigated urban indoor infiltration factor ~0.78
@@ -55,7 +57,7 @@ export function calculateProtectionProfile(
   for (const hack of activeHacks) {
     remainingNo2Fraction *= 1 - hack.no2ReductionPct / 100;
   }
-  if (adoptedSwapIds.includes("portable-induction-hob")) {
+  if (swapSet.has("portable-induction-hob")) {
     remainingNo2Fraction *= 0.45;
   }
   const no2ReductionPct = Math.max(8, Math.min(88, Math.round((1 - Math.min(1, remainingNo2Fraction)) * 100)));
@@ -110,7 +112,7 @@ export function buildLongitudinalSeries(
         ? 2
         : 1;
 
-    const autoSleep = Math.min(5, Math.max(1, autoSymptom + (idx >= 7 ? 0 : -0)));
+    const autoSleep = Math.min(5, Math.max(1, autoSymptom));
 
     const parsedDate = new Date(`${day.date}T12:00:00`);
     const shortDate = Number.isNaN(parsedDate.getTime())

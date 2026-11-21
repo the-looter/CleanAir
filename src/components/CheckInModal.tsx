@@ -24,12 +24,13 @@ export const CheckInModal: React.FC<CheckInModalProps> = ({
 
   useEffect(() => {
     if (!open) return;
+    setDate(defaultDate);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open, defaultDate, onClose]);
 
   if (!open) return null;
 
@@ -66,7 +67,7 @@ export const CheckInModal: React.FC<CheckInModalProps> = ({
             aria-label="Close modal"
             className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-md p-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-teal-700"
           >
-            <X className="h-4 w-4" />
+            <X className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
 
@@ -87,12 +88,16 @@ export const CheckInModal: React.FC<CheckInModalProps> = ({
 
           <div>
             <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-slate-700">
+              <span id="comfort-score-label" className="text-xs font-medium text-slate-700">
                 Respiratory Comfort Score (1 = wheeze/cough, 5 = clear)
-              </label>
+              </span>
               <span className="font-mono text-xs font-semibold text-teal-800">{symptomScore} / 5</span>
             </div>
-            <div className="mt-2 flex flex-col gap-1.5">
+            <div
+              role="group"
+              aria-labelledby="comfort-score-label"
+              className="mt-2 flex flex-col gap-1.5"
+            >
               {[
                 { val: 5, label: "5 — Clear breathing, zero nasal or throat irritation" },
                 { val: 4, label: "4 — Comfortable overall, minor morning dryness" },
@@ -169,7 +174,7 @@ export const CheckInModal: React.FC<CheckInModalProps> = ({
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="e.g., Ran Corsi-Rosenthal box overnight, kids felt energized at school drop-off"
-              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-teal-700 focus:outline-none"
+              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-600 focus:border-teal-700 focus:outline-none"
             />
           </div>
 
@@ -177,13 +182,13 @@ export const CheckInModal: React.FC<CheckInModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              className="min-h-[40px] rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800"
+              className="min-h-[40px] rounded-lg bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700"
             >
               Save Check-In
             </button>

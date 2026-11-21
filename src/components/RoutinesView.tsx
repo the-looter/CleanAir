@@ -81,9 +81,9 @@ export const RoutinesView: React.FC<RoutinesViewProps> = ({
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
       {/* Left Vertical Daypart Menu Rail */}
-      <aside className="lg:col-span-3">
+      <nav aria-label="Routine schedule menu" className="lg:col-span-3">
         <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="px-2 pb-2 text-xs font-medium text-slate-500">
+          <div className="px-2 pb-2 text-xs font-medium text-slate-600">
             Routine Schedule Menu
           </div>
           <ul className="flex flex-col gap-1">
@@ -99,7 +99,7 @@ export const RoutinesView: React.FC<RoutinesViewProps> = ({
                 }`}
               >
                 <span>Full Day Schedule</span>
-                <span className="font-mono text-xs text-slate-500">{dayparts.length}</span>
+                <span className="font-mono text-xs text-slate-600">{dayparts.length}</span>
               </button>
             </li>
             {dayparts.map((dp) => (
@@ -117,7 +117,7 @@ export const RoutinesView: React.FC<RoutinesViewProps> = ({
                   <span className={`text-sm ${selectedDaypart === dp.id ? "font-semibold" : "font-medium"}`}>
                     {dp.label}
                   </span>
-                  <span className="mt-0.5 font-mono text-xs text-slate-500">
+                  <span className="mt-0.5 font-mono text-xs text-slate-600">
                     {dp.timeRange}
                   </span>
                 </button>
@@ -130,14 +130,14 @@ export const RoutinesView: React.FC<RoutinesViewProps> = ({
               type="button"
               onClick={handleGenerate}
               disabled={loading || !airQuality}
-              className="flex w-full items-center justify-center gap-2 rounded-lg bg-teal-700 px-3 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-teal-800 disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-teal-700 px-3 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-teal-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700 disabled:opacity-50"
             >
-              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+              <RefreshCw aria-hidden="true" className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
               {loading ? "Synthesizing Routine..." : "Regenerate AI Routine"}
             </button>
           </div>
         </div>
-      </aside>
+      </nav>
 
       {/* Main Routine Workspace */}
       <div className="space-y-6 lg:col-span-9">
@@ -145,12 +145,12 @@ export const RoutinesView: React.FC<RoutinesViewProps> = ({
         <section className="rounded-xl border border-slate-200 bg-white p-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <div className="text-xs text-slate-500">
+              <div className="text-xs text-slate-600">
                 {selectedCity.name} · Next 24-Hour PM2.5 Forecast
               </div>
-              <h2 className="mt-1 font-display text-lg font-semibold text-slate-900">
+              <h1 className="mt-1 font-display text-xl font-bold text-slate-900">
                 Low-Emission Timing & Ventilation Window
-              </h2>
+              </h1>
             </div>
             {airQuality && (
               <div className="text-right text-xs text-slate-600">
@@ -162,7 +162,7 @@ export const RoutinesView: React.FC<RoutinesViewProps> = ({
                     {airQuality.ventilationWindow.endTime.slice(11, 16)}
                   </span>
                 </div>
-                <div className="mt-0.5 font-mono text-slate-500">
+                <div className="mt-0.5 font-mono text-slate-600">
                   Peak AQI {airQuality.peakNext24h.usAqi} around{" "}
                   {airQuality.peakNext24h.time.slice(11, 16)}
                 </div>
@@ -170,7 +170,11 @@ export const RoutinesView: React.FC<RoutinesViewProps> = ({
             )}
           </div>
 
-          <div className="mt-5 flex h-28 items-end gap-1 border-b border-slate-200 pb-2">
+          <div
+            role="img"
+            aria-label={`Next 24-hour PM2.5 forecast chart for ${selectedCity.name}`}
+            className="mt-5 flex h-28 items-end gap-1 border-b border-slate-200 pb-2"
+          >
             {next24.map((h) => {
               const heightPct = Math.max(10, Math.round((h.pm25 / maxHourPm) * 100));
               const prefix = h.time.slice(0, 13);
@@ -201,7 +205,7 @@ export const RoutinesView: React.FC<RoutinesViewProps> = ({
               );
             })}
           </div>
-          <div className="mt-2 flex justify-between font-mono text-[11px] text-slate-500">
+          <div className="mt-2 flex justify-between font-mono text-[11px] text-slate-600">
             <span>{next24[0]?.time.slice(11, 16) || "Now"}</span>
             <span>+6h</span>
             <span>+12h</span>
@@ -243,7 +247,7 @@ export const RoutinesView: React.FC<RoutinesViewProps> = ({
           <>
             {/* Executive Summary & Mask/Ventilation Guidance */}
             <section className="rounded-xl border border-slate-200 bg-white p-6">
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
                 <span>
                   Tailored for {familyProfile.householdName} · {familyProfile.members.length} members · {familyProfile.homeType}
                 </span>
@@ -255,19 +259,19 @@ export const RoutinesView: React.FC<RoutinesViewProps> = ({
 
               <div className="mt-4 grid grid-cols-1 gap-4 border-t border-slate-100 pt-4 sm:grid-cols-3">
                 <div>
-                  <div className="text-xs font-medium text-slate-500">Mask & Transit Guidance</div>
+                  <div className="text-xs font-medium text-slate-600">Mask & Transit Guidance</div>
                   <p className="mt-1 text-xs leading-relaxed text-slate-700">
                     {routinePlan.maskGuidance}
                   </p>
                 </div>
                 <div>
-                  <div className="text-xs font-medium text-slate-500">Ventilation Strategy</div>
+                  <div className="text-xs font-medium text-slate-600">Ventilation Strategy</div>
                   <p className="mt-1 text-xs leading-relaxed text-slate-700">
                     {routinePlan.ventilationAdvice}
                   </p>
                 </div>
                 <div>
-                  <div className="text-xs font-medium text-slate-500">Estimated Routine Payoff</div>
+                  <div className="text-xs font-medium text-slate-600">Estimated Routine Payoff</div>
                   <div className="mt-1 font-mono text-sm font-semibold text-teal-800 tabular-nums">
                     -{routinePlan.estimatedExposureReductionPct}% exposure ·{" "}
                     {routinePlan.estimatedDailyCo2SavedKg} kg CO₂e saved
@@ -282,14 +286,14 @@ export const RoutinesView: React.FC<RoutinesViewProps> = ({
                 <section key={dp.id} className="rounded-xl border border-slate-200 bg-white p-6">
                   <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-slate-100 pb-3">
                     <div>
-                      <div className="flex items-center gap-2 text-xs text-slate-500">
+                      <div className="flex items-center gap-2 text-xs text-slate-600">
                         <span className="font-mono font-medium text-slate-700">{dp.timeRange}</span>
                         <span aria-hidden="true">·</span>
                         <span>Risk Level: {dp.riskLevel}</span>
                       </div>
-                      <h3 className="mt-1 font-display text-base font-semibold text-slate-900">
+                      <h2 className="mt-1 font-display text-base font-semibold text-slate-900">
                         {dp.label} — {dp.headline}
-                      </h3>
+                      </h2>
                     </div>
                   </div>
 
@@ -305,30 +309,30 @@ export const RoutinesView: React.FC<RoutinesViewProps> = ({
                               onClick={() => onToggleStep(stepKey)}
                               aria-pressed={checked}
                               aria-label={`Mark ${step.title} complete`}
-                              className="mt-0.5 min-h-[28px] min-w-[28px] shrink-0 text-slate-500 hover:text-teal-700 focus-visible:outline-2 focus-visible:outline-teal-700 rounded"
+                              className="mt-0.5 min-h-[36px] min-w-[36px] flex items-center justify-center shrink-0 text-slate-600 hover:text-teal-700 focus-visible:outline-2 focus-visible:outline-teal-700 rounded"
                             >
                               {checked ? (
-                                <CheckCircle2 className="h-5 w-5 text-teal-700" />
+                                <CheckCircle2 aria-hidden="true" className="h-5 w-5 text-teal-700" />
                               ) : (
-                                <Circle className="h-5 w-5" />
+                                <Circle aria-hidden="true" className="h-5 w-5" />
                               )}
                             </button>
                             <div className="min-w-0 flex-1">
                               <div className="flex flex-wrap items-center gap-2">
                                 <span
                                   className={`text-sm font-semibold ${
-                                    checked ? "line-through text-slate-500" : "text-slate-900"
+                                    checked ? "line-through text-slate-600" : "text-slate-900"
                                   }`}
                                 >
                                   {step.title}
                                 </span>
-                                <span className="text-xs text-slate-500">· {step.category}</span>
+                                <span className="text-xs text-slate-600">· {step.category}</span>
                               </div>
                               <p className="mt-1 text-xs leading-relaxed text-slate-600">
                                 {step.detail}
                               </p>
                               <div className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-teal-800">
-                                <Shield className="h-3.5 w-3.5 shrink-0" />
+                                <Shield aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
                                 <span>Real-World Impact: {step.realWorldImpact}</span>
                               </div>
                             </div>

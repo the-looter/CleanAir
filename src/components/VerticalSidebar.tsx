@@ -113,7 +113,7 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
       <div className="flex h-16 items-center justify-between border-b border-slate-200 px-5">
         <div className="flex items-center gap-2.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-700 text-white">
-            <ShieldCheck className="h-4 w-4" />
+            <ShieldCheck className="h-4 w-4" aria-hidden="true" />
           </div>
           <span className="font-display text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap">
             ClearAir
@@ -123,15 +123,15 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
           type="button"
           onClick={onCloseMobile}
           aria-label="Close navigation menu"
-          className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-900 lg:hidden"
+          className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-md p-1.5 text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-teal-700 lg:hidden"
         >
-          <X className="h-5 w-5" />
+          <X className="h-5 w-5" aria-hidden="true" />
         </button>
       </div>
 
       {/* Primary Vertical Navigation Menu */}
       <nav aria-label="Primary vertical navigation" className="flex-1 overflow-y-auto px-3 py-5">
-        <div className="px-2.5 pb-2 text-xs font-medium text-slate-500">
+        <div className="px-2.5 pb-2 text-xs font-medium text-slate-600">
           Workspace Menu
         </div>
         <ul className="flex flex-col gap-1">
@@ -151,8 +151,9 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
                   }`}
                 >
                   <Icon
+                    aria-hidden="true"
                     className={`mt-0.5 h-4 w-4 shrink-0 ${
-                      isActive ? "text-teal-700" : "text-slate-500 group-hover:text-slate-700"
+                      isActive ? "text-teal-700" : "text-slate-600 group-hover:text-slate-800"
                     }`}
                   />
                   <div className="min-w-0 flex-1">
@@ -163,7 +164,7 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
                     >
                       {item.label}
                     </div>
-                    <div className="mt-0.5 text-xs text-slate-500 truncate">
+                    <div className="mt-0.5 text-xs text-slate-600 truncate">
                       {item.sublabel}
                     </div>
                   </div>
@@ -176,15 +177,16 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
         {/* Vertical Local Air Switcher Menu */}
         <div className="mt-6 border-t border-slate-200 pt-5">
           <div className="flex items-center justify-between px-2.5 pb-2">
-            <span className="text-xs font-medium text-slate-500">Monitoring Location</span>
+            <span className="text-xs font-medium text-slate-600">Monitoring Location</span>
             <button
               type="button"
               onClick={onRefreshAq}
               disabled={loadingAq}
+              aria-label="Refresh local air quality telemetry"
               title="Refresh local telemetry"
-              className="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-50"
+              className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-teal-700 disabled:opacity-50"
             >
-              <RefreshCw className={`h-3.5 w-3.5 ${loadingAq ? "animate-spin" : ""}`} />
+              <RefreshCw aria-hidden="true" className={`h-3.5 w-3.5 ${loadingAq ? "animate-spin" : ""}`} />
             </button>
           </div>
 
@@ -238,7 +240,7 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
                       }`}
                     >
                       <span className="truncate">{city.name}</span>
-                      <span className="text-slate-500 ml-2 shrink-0">{city.country}</span>
+                      <span className="text-slate-600 ml-2 shrink-0">{city.country}</span>
                     </button>
                   </li>
                 );
@@ -250,7 +252,7 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
                     setCityMenuOpen(false);
                     handleNavClick("family");
                   }}
-                  className="w-full rounded-md px-2.5 py-2 text-left text-xs font-medium text-teal-700 hover:bg-teal-50"
+                  className="w-full rounded-md px-2.5 py-2 text-left text-xs font-medium text-teal-700 hover:bg-teal-50 focus-visible:outline-2 focus-visible:outline-teal-700"
                 >
                   Search any global city...
                 </button>
@@ -266,9 +268,9 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
                 onCloseMobile();
                 onOpenQuickChat();
               }}
-              className="flex w-full items-center gap-2.5 rounded-lg border border-teal-200 bg-teal-50/70 px-3 py-2.5 text-left text-xs font-semibold text-teal-900 transition-colors hover:bg-teal-100/80"
+              className="flex w-full items-center gap-2.5 rounded-lg border border-teal-200 bg-teal-50/70 px-3 py-2.5 text-left text-xs font-semibold text-teal-900 transition-colors hover:bg-teal-100/80 focus-visible:outline-2 focus-visible:outline-teal-700"
             >
-              <MessageSquare className="h-4 w-4 shrink-0 text-teal-700" />
+              <MessageSquare aria-hidden="true" className="h-4 w-4 shrink-0 text-teal-700" />
               <span>Open Live AI Chat</span>
             </button>
           </div>
@@ -280,7 +282,9 @@ export const VerticalSidebar: React.FC<VerticalSidebarProps> = ({
   return (
     <>
       {/* Desktop fixed vertical sidebar */}
-      <aside className="hidden lg:block lg:w-64 lg:shrink-0">{sidebarContent}</aside>
+      <aside aria-label="Workspace sidebar" className="hidden lg:block lg:w-64 lg:shrink-0">
+        {sidebarContent}
+      </aside>
 
       {/* Mobile slide-over vertical drawer */}
       {mobileOpen && (

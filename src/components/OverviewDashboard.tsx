@@ -160,7 +160,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
       <section className="rounded-xl border border-slate-200 bg-white p-6">
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-center">
           <div className="lg:col-span-7">
-            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
               <span>{selectedCity.name}, {selectedCity.country}</span>
               <span aria-hidden="true">·</span>
               <span>{familyProfile.householdName}</span>
@@ -229,14 +229,14 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             </div>
 
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
-              <div className="text-xs text-slate-500">NO₂ / Ozone (O₃)</div>
+              <div className="text-xs text-slate-600">NO₂ / Ozone (O₃)</div>
               <div className="mt-1 font-mono text-base font-semibold text-slate-900 tabular-nums">
                 {airQuality?.current.no2 ?? 0} / {airQuality?.current.o3 ?? 0} µg/m³
               </div>
             </div>
 
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
-              <div className="text-xs text-slate-500">Ventilation Window</div>
+              <div className="text-xs text-slate-600">Ventilation Window</div>
               <div className="mt-1 flex items-center gap-1.5 font-mono text-base font-semibold text-slate-900 tabular-nums">
                 <Wind className="h-3.5 w-3.5 text-teal-700" />
                 {airQuality
@@ -251,14 +251,14 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
       {/* 4-Column Longitudinal Health & Real-World Impact KPI Strip */}
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-xl border border-slate-200 bg-white p-5">
-          <div className="text-xs font-medium text-slate-500">
+          <div className="text-xs font-medium text-slate-600">
             {timeRange === "7d" ? "7-Day" : "14-Day"} Avg Outdoor vs Indoor
           </div>
           <div className="mt-2 flex items-baseline gap-2 font-mono tabular-nums">
             <span className="text-2xl font-semibold text-slate-900">
               {summary.avgIndoorPm25}
             </span>
-            <span className="text-xs text-slate-500">
+            <span className="text-xs text-slate-600">
               vs {summary.avgOutdoorPm25} µg/m³ out
             </span>
           </div>
@@ -269,12 +269,12 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-5">
-          <div className="text-xs font-medium text-slate-500">Symptom-Free Comfort Days</div>
+          <div className="text-xs font-medium text-slate-600">Symptom-Free Comfort Days</div>
           <div className="mt-2 flex items-baseline gap-2 font-mono tabular-nums">
             <span className="text-2xl font-semibold text-slate-900">
               {summary.symptomFreeDays} / {visibleSeries.length}
             </span>
-            <span className="text-xs text-slate-500">days scored ≥ 4/5</span>
+            <span className="text-xs text-slate-600">days scored ≥ 4/5</span>
           </div>
           <div className="mt-2 flex items-center gap-1 text-xs font-medium text-emerald-700">
             <ArrowUpRight className="h-3.5 w-3.5" />
@@ -285,12 +285,12 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-5">
-          <div className="text-xs font-medium text-slate-500">Clean-Air Days Reclaimed</div>
+          <div className="text-xs font-medium text-slate-600">Clean-Air Days Reclaimed</div>
           <div className="mt-2 flex items-baseline gap-2 font-mono tabular-nums">
             <span className="text-2xl font-semibold text-slate-900">
               {summary.cleanAirDaysGained}
             </span>
-            <span className="text-xs text-slate-500">polluted days neutralized indoors</span>
+            <span className="text-xs text-slate-600">polluted days neutralized indoors</span>
           </div>
           <div className="mt-2 text-xs text-slate-600 tabular-nums">
             {summary.totalPm25DoseAvoided} µg/m³·days cumulative PM2.5 avoided
@@ -298,12 +298,12 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-5">
-          <div className="text-xs font-medium text-slate-500">Annual Household Impact</div>
+          <div className="text-xs font-medium text-slate-600">Annual Household Impact</div>
           <div className="mt-2 flex items-baseline gap-2 font-mono tabular-nums">
             <span className="text-2xl font-semibold text-slate-900">
               {summary.annualCo2SavedKg.toLocaleString()} kg
             </span>
-            <span className="text-xs text-slate-500">CO₂e / yr</span>
+            <span className="text-xs text-slate-600">CO₂e / yr</span>
           </div>
           <div className="mt-2 text-xs text-slate-600 tabular-nums">
             {summary.annualNoxSavedG.toLocaleString()} g NOₓ avoided · {summary.no2ReductionPct}% indoor NO₂ drop
@@ -321,14 +321,14 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                 <h2 className="font-display text-base font-semibold text-slate-900">
                   Long-Term Health & Local Exposure
                 </h2>
-                <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                <p className="mt-1 text-xs leading-relaxed text-slate-600">
                   Compares real daily outdoor PM2.5 in {selectedCity.name} against your family's protected indoor air and logged breathing comfort.
                 </p>
               </div>
 
               {/* Vertical Timeframe Menu */}
               <div>
-                <div className="pb-1.5 text-xs font-medium text-slate-500">Time Horizon</div>
+                <div className="pb-1.5 text-xs font-medium text-slate-600">Time Horizon</div>
                 <div className="flex flex-col gap-1">
                   <button
                     type="button"
@@ -341,7 +341,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                     }`}
                   >
                     <span>14-Day Local Window</span>
-                    <span className="font-mono text-slate-500">14d</span>
+                    <span className="font-mono text-slate-600">14d</span>
                   </button>
                   <button
                     type="button"
@@ -354,14 +354,14 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                     }`}
                   >
                     <span>Past 7 Days Focus</span>
-                    <span className="font-mono text-slate-500">7d</span>
+                    <span className="font-mono text-slate-600">7d</span>
                   </button>
                 </div>
               </div>
 
               {/* Vertical Chart Series Menu */}
               <div>
-                <div className="pb-1.5 text-xs font-medium text-slate-500">Chart View</div>
+                <div className="pb-1.5 text-xs font-medium text-slate-600">Chart View</div>
                 <div className="flex flex-col gap-1">
                   <button
                     type="button"
@@ -423,7 +423,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                   </span>
                 </div>
               )}
-              <span className="font-mono text-slate-500">WHO 24h Guideline: 15 µg/m³</span>
+              <span className="font-mono text-slate-600">WHO 24h Guideline: 15 µg/m³</span>
             </div>
 
             <div className="w-full overflow-x-auto">
@@ -506,7 +506,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                     <path
                       d={outdoorPath}
                       fill="none"
-                      stroke="#94a3b8"
+                      stroke="#64748b"
                       strokeWidth="2"
                       strokeLinejoin="round"
                     />
@@ -523,7 +523,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                           cx={xForIdx(i)}
                           cy={yForPm(d.outdoorPm25)}
                           r="3"
-                          className="fill-slate-400"
+                          className="fill-slate-500"
                         />
                         <circle
                           cx={xForIdx(i)}
@@ -566,7 +566,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
                       x={xForIdx(i)}
                       y={svgH - 8}
                       textAnchor="middle"
-                      className="fill-slate-500 font-mono text-[10px]"
+                      className="fill-slate-600 font-mono text-[10px]"
                     >
                       {d.shortDate}
                     </text>
@@ -585,7 +585,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             <h2 className="font-display text-base font-semibold text-slate-900">
               Daily Local Exposure & Health Log
             </h2>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-slate-600">
               Real local daily AQI paired with your household's indoor exposure reduction and check-ins.
             </p>
           </div>
@@ -601,7 +601,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-sm">
             <thead>
-              <tr className="border-b border-slate-200 bg-slate-50/70 text-xs font-medium text-slate-500">
+              <tr className="border-b border-slate-200 bg-slate-50/70 text-xs font-medium text-slate-600">
                 <th className="px-6 py-3">Date</th>
                 <th className="px-4 py-3 text-right">Local AQI</th>
                 <th className="px-4 py-3 text-right">Outdoor PM2.5</th>

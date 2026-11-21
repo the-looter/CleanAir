@@ -181,3 +181,18 @@ export interface AiImpactAnalysis {
   annualEmissionsImpact: string;
   customSteps: string[];
 }
+
+export interface AssistantChatContext {
+  locationName: string;
+  current?: LocalAirQualityData["current"];
+  ventilationWindow?: LocalAirQualityData["ventilationWindow"];
+  familySummary: string;
+  activeHacks: string[];
+  adoptedSwaps: string[];
+}
+
+export interface AssistantJsonReply {
+  answer: string;
+  keyActions: string[];
+  realWorldImpact: string;
+}

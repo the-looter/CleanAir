@@ -128,30 +128,46 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [loadAirQuality]);
 
-  const handleToggleHack = (hackId: string) => {
+  const handleToggleHack = useCallback((hackId: string) => {
     setActiveHackIds((prev) =>
       prev.includes(hackId) ? prev.filter((id) => id !== hackId) : [...prev, hackId]
     );
-  };
+  }, []);
 
-  const handleToggleSwap = (swapId: string) => {
+  const handleToggleSwap = useCallback((swapId: string) => {
     setAdoptedSwapIds((prev) =>
       prev.includes(swapId) ? prev.filter((id) => id !== swapId) : [...prev, swapId]
     );
-  };
+  }, []);
 
-  const handleSaveCheckIn = (entry: HealthLogEntry) => {
+  const handleSaveCheckIn = useCallback((entry: HealthLogEntry) => {
     setHealthLogs((prev) => {
       const filtered = prev.filter((l) => l.date !== entry.date);
       return [...filtered, entry];
     });
-  };
+  }, []);
 
-  const handleToggleStep = (stepKey: string) => {
+  const handleToggleStep = useCallback((stepKey: string) => {
     setCompletedStepKeys((prev) =>
       prev.includes(stepKey) ? prev.filter((k) => k !== stepKey) : [...prev, stepKey]
     );
-  };
+  }, []);
+
+  const handleAddMessages = useCallback((msgs: ChatMessage[]) => {
+    setChatMessages((prev) => [...prev, ...msgs]);
+  }, []);
+
+  const handleUpdateMessage = useCallback((id: string, text: string) => {
+    setChatMessages((prev) => prev.map((m) => (m.id === id ? { ...m, text } : m)));
+  }, []);
+
+  const handleRemoveMessage = useCallback((id: string) => {
+    setChatMessages((prev) => prev.filter((m) => m.id !== id));
+  }, []);
+
+  const handleClearMessages = useCallback(() => {
+    setChatMessages([]);
+  }, []);
 
   const todayStr =
     airQuality?.observedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
@@ -189,12 +205,12 @@ export default function App() {
               aria-expanded={mobileMenuOpen}
               className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg p-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-teal-700 lg:hidden"
             >
-              <Menu className="h-5 w-5" />
+              <Menu className="h-5 w-5" aria-hidden="true" />
             </button>
 
             <div className="flex items-center gap-2 text-sm whitespace-nowrap truncate">
-              <span className="font-medium text-slate-500">ClearAir</span>
-              <span className="text-slate-400" aria-hidden="true">/</span>
+              <span className="font-medium text-slate-600">ClearAir</span>
+              <span className="text-slate-600" aria-hidden="true">/</span>
               <span className="font-semibold text-slate-900">
                 {SECTION_LABELS[activeSection]}
               </span>
@@ -277,14 +293,10 @@ export default function App() {
               activeHackIds={activeHackIds}
               adoptedSwapIds={adoptedSwapIds}
               messages={chatMessages}
-              onAddMessages={(msgs) => setChatMessages((prev) => [...prev, ...msgs])}
-              onUpdateMessage={(id, text) =>
-                setChatMessages((prev) => prev.map((m) => (m.id === id ? { ...m, text } : m)))
-              }
-              onRemoveMessage={(id) =>
-                setChatMessages((prev) => prev.filter((m) => m.id !== id))
-              }
-              onClearMessages={() => setChatMessages([])}
+              onAddMessages={handleAddMessages}
+              onUpdateMessage={handleUpdateMessage}
+              onRemoveMessage={handleRemoveMessage}
+              onClearMessages={handleClearMessages}
             />
           )}
 
@@ -317,13 +329,9 @@ export default function App() {
           activeHackIds={activeHackIds}
           adoptedSwapIds={adoptedSwapIds}
           messages={chatMessages}
-          onAddMessages={(msgs) => setChatMessages((prev) => [...prev, ...msgs])}
-          onUpdateMessage={(id, text) =>
-            setChatMessages((prev) => prev.map((m) => (m.id === id ? { ...m, text } : m)))
-          }
-          onRemoveMessage={(id) =>
-            setChatMessages((prev) => prev.filter((m) => m.id !== id))
-          }
+          onAddMessages={handleAddMessages}
+          onUpdateMessage={handleUpdateMessage}
+          onRemoveMessage={handleRemoveMessage}
         />
       </Suspense>
     </div>

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { AlertCircle, Send, Square, X } from "lucide-react";
-import { sendAssistantMessage, streamAssistantChat } from "../services/api";
+import { useStreamingChat } from "../hooks/useStreamingChat";
 import {
   ChatMessage,
   CityLocation,
@@ -42,16 +42,33 @@ export const QuickChatDrawer: React.FC<QuickChatDrawerProps> = ({
   onRemoveMessage,
 }) => {
   const [input, setInput] = useState("");
-  const [streaming, setStreaming] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const { streaming, error, sendMessage, stopStreaming } = useStreamingChat({
+    selectedCity,
+    airQuality,
+    familyProfile,
+    activeHackIds,
+    adoptedSwapIds,
+    messages,
+    onAddMessages,
+    onUpdateMessage,
+    onRemoveMessage,
+    idPrefix: "quick",
+  });
 
   useEffect(() => {
     if (open) {
       endRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [open, messages.length, streaming]);
+
+  useEffect(() => {
+    if (open) {
+      inputRef.current?.focus();
+    }
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -62,146 +79,29 @@ export const QuickChatDrawer: React.FC<QuickChatDrawerProps> = ({
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  useEffect(() => {
-    return () => {
-      abortRef.current?.abort();
-    };
-  }, []);
-
   if (!open) return null;
 
   const handleSend = async (promptText: string) => {
     const trimmed = promptText.trim();
     if (!trimmed || streaming) return;
-
-    setError(null);
-    const nowTime = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    const userMsg: ChatMessage = {
-      id: `qu-${Date.now()}`,
-      role: "user",
-      text: trimmed,
-      timestamp: nowTime,
-    };
-    const assistantId = `qa-${Date.now() + 1}`;
-    const placeholder: ChatMessage = {
-      id: assistantId,
-      role: "assistant",
-      text: "",
-      timestamp: nowTime,
-    };
-
-    const historySnapshot = messages
-      .filter((m) => m.text.trim().length > 0)
-      .map((m) => ({ role: m.role, text: m.text }));
-    onAddMessages([userMsg, placeholder]);
     setInput("");
-    setStreaming(true);
-
-    const familySummary = `${familyProfile.householdName} (${familyProfile.homeType}, ${
-      familyProfile.stoveType
-    }, ${familyProfile.purifierCount} purifiers, ${familyProfile.primaryCommute}). Members: ${familyProfile.members
-      .map((m) => `${m.name} (${m.ageGroup}: ${m.sensitivities.join(", ") || "none"})`)
-      .join("; ")}`;
-
-    const controller = new AbortController();
-    abortRef.current = controller;
-    let accumulated = "";
-    let streamErroredMsg: string | null = null;
-    const chatContext = {
-      locationName: `${selectedCity.name}, ${selectedCity.country}`,
-      current: airQuality?.current,
-      ventilationWindow: airQuality?.ventilationWindow,
-      familySummary,
-      activeHacks: activeHackIds,
-      adoptedSwaps: adoptedSwapIds,
-    };
-
-    const tryFallbackJson = async (): Promise<boolean> => {
-      try {
-        const res = await sendAssistantMessage({
-          message: trimmed,
-          history: historySnapshot,
-          context: chatContext,
-        });
-        const formatted = [
-          res.answer,
-          ...(res.keyActions || []).map((a) => `- ${a}`),
-          res.realWorldImpact ? `Real-World Impact: ${res.realWorldImpact}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n\n");
-        if (formatted.trim()) {
-          onUpdateMessage(assistantId, formatted);
-          setError(null);
-          return true;
-        }
-      } catch (fallbackErr) {
-        streamErroredMsg =
-          fallbackErr instanceof Error ? fallbackErr.message : streamErroredMsg;
-      }
-      return false;
-    };
-
-    try {
-      await streamAssistantChat(
-        {
-          message: trimmed,
-          history: historySnapshot,
-          context: chatContext,
-        },
-        {
-          onChunk: (chunk) => {
-            accumulated += chunk;
-            onUpdateMessage(assistantId, accumulated);
-          },
-          onDone: () => {
-            // Handled below
-          },
-          onError: (errMsg) => {
-            streamErroredMsg = errMsg;
-          },
-        },
-        controller.signal
-      );
-
-      if (!accumulated.trim()) {
-        const recovered = controller.signal.aborted ? false : await tryFallbackJson();
-        if (!recovered) {
-          onRemoveMessage?.(assistantId);
-          setError(streamErroredMsg || "The AI advisor returned an empty response. Please try again.");
-        }
-      } else if (streamErroredMsg) {
-        setError(streamErroredMsg);
-      }
-    } catch (err) {
-      if ((err as Error)?.name === "AbortError") {
-        if (!accumulated.trim()) {
-          onRemoveMessage?.(assistantId);
-        }
-      } else {
-        const recovered = accumulated.trim() ? true : await tryFallbackJson();
-        if (!recovered) {
-          onRemoveMessage?.(assistantId);
-          setError(
-            streamErroredMsg ||
-              (err instanceof Error ? err.message : "Streaming chat failed.")
-          );
-        }
-      }
-    } finally {
-      setStreaming(false);
-    }
+    await sendMessage(trimmed);
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/35" role="dialog" aria-modal="true" aria-label="Real-time AI chat drawer">
+    <div
+      className="fixed inset-0 z-50 flex justify-end bg-slate-900/35"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Real-time AI chat drawer"
+    >
       <div className="flex h-full w-full max-w-md flex-col border-l border-slate-200 bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
           <div>
             <h2 className="font-display text-base font-semibold text-slate-900">
               Live AI Chat
             </h2>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-slate-600">
               {selectedCity.name} · AQI {airQuality?.current.usAqi ?? "—"} · PM2.5{" "}
               {airQuality?.current.pm25 ?? "—"} µg/m³
             </p>
@@ -212,7 +112,7 @@ export const QuickChatDrawer: React.FC<QuickChatDrawerProps> = ({
             aria-label="Close live AI chat"
             className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-lg p-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-teal-700"
           >
-            <X className="h-5 w-5" />
+            <X className="h-5 w-5" aria-hidden="true" />
           </button>
         </div>
 
@@ -263,10 +163,13 @@ export const QuickChatDrawer: React.FC<QuickChatDrawerProps> = ({
                 >
                   {msg.text || (isLastStreaming ? "Thinking..." : "")}
                   {isLastStreaming && msg.text && (
-                    <span className="ml-1 inline-block h-3 w-1 animate-pulse bg-teal-700 align-middle" />
+                    <span
+                      aria-hidden="true"
+                      className="ml-1 inline-block h-3 w-1 animate-pulse bg-teal-700 align-middle"
+                    />
                   )}
                 </div>
-                <span className="mt-1 font-mono text-[10px] text-slate-500">
+                <span className="mt-1 font-mono text-[10px] text-slate-600">
                   {msg.role === "user" ? "You" : "ClearAir AI"} · {msg.timestamp}
                 </span>
               </div>
@@ -274,8 +177,11 @@ export const QuickChatDrawer: React.FC<QuickChatDrawerProps> = ({
           })}
 
           {error && (
-            <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700"
+            >
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
               <span>{error}</span>
             </div>
           )}
@@ -293,24 +199,22 @@ export const QuickChatDrawer: React.FC<QuickChatDrawerProps> = ({
             Message ClearAir AI
           </label>
           <input
+            ref={inputRef}
             id="quick-chat-input"
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Ask ClearAir AI..."
-            className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-900 placeholder:text-slate-500 focus:border-teal-700 focus:outline-none"
+            className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-900 placeholder:text-slate-600 focus:border-teal-700 focus:outline-none"
           />
           {streaming ? (
             <button
               type="button"
-              onClick={() => {
-                abortRef.current?.abort();
-                setStreaming(false);
-              }}
+              onClick={stopStreaming}
               className="min-h-[38px] min-w-[38px] flex items-center justify-center rounded-lg bg-slate-200 p-2 text-slate-800 hover:bg-slate-300 focus-visible:outline-2 focus-visible:outline-teal-700"
               aria-label="Stop streaming"
             >
-              <Square className="h-3.5 w-3.5 fill-slate-700" />
+              <Square className="h-3.5 w-3.5 fill-slate-700" aria-hidden="true" />
             </button>
           ) : (
             <button
@@ -319,7 +223,7 @@ export const QuickChatDrawer: React.FC<QuickChatDrawerProps> = ({
               className="min-h-[38px] min-w-[38px] flex items-center justify-center rounded-lg bg-teal-700 p-2 text-white hover:bg-teal-800 focus-visible:outline-2 focus-visible:outline-teal-700 disabled:opacity-50"
               aria-label="Send message"
             >
-              <Send className="h-3.5 w-3.5" />
+              <Send className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
           )}
         </form>

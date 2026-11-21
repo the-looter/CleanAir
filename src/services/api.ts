@@ -1,5 +1,7 @@
 import {
   AiImpactAnalysis,
+  AssistantChatContext,
+  AssistantJsonReply,
   CityLocation,
   FamilyProfile,
   LocalAirQualityData,
@@ -61,35 +63,21 @@ export async function analyzeRealWorldImpact(payload: {
 export async function sendAssistantMessage(payload: {
   message: string;
   history: Array<{ role: "user" | "assistant"; text: string }>;
-  context: {
-    locationName: string;
-    current?: LocalAirQualityData["current"];
-    ventilationWindow?: LocalAirQualityData["ventilationWindow"];
-    familySummary: string;
-    activeHacks: string[];
-    adoptedSwaps: string[];
-  };
-}): Promise<{ answer: string; keyActions: string[]; realWorldImpact: string }> {
+  context: AssistantChatContext;
+}): Promise<AssistantJsonReply> {
   const res = await fetch("/api/assistant/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  return parseJsonOrThrow<{ answer: string; keyActions: string[]; realWorldImpact: string }>(res);
+  return parseJsonOrThrow<AssistantJsonReply>(res);
 }
 
 export async function streamAssistantChat(
   payload: {
     message: string;
     history: Array<{ role: "user" | "assistant"; text: string }>;
-    context: {
-      locationName: string;
-      current?: LocalAirQualityData["current"];
-      ventilationWindow?: LocalAirQualityData["ventilationWindow"];
-      familySummary: string;
-      activeHacks: string[];
-      adoptedSwaps: string[];
-    };
+    context: AssistantChatContext;
   },
   callbacks: {
     onChunk: (chunk: string) => void;
