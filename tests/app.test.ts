@@ -4,6 +4,8 @@ import http from "node:http";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { createApiApp, getAqiCategory } from "../server";
+import { setBoundedCache } from "../server/airQuality";
+import { extractErrorMessage, parseJsonSafe } from "../server/gemini";
 import { DEFAULT_FAMILY_PROFILE } from "../src/data/knowledgeBase";
 import { DailyAirHistoryPoint, HealthLogEntry } from "../src/types";
 import {
@@ -140,6 +142,18 @@ describe("Environmental Health & Longitudinal Exposure Calculations", () => {
     assert.ok(formatted.includes("- Run HEPA purifier"));
     assert.ok(formatted.includes("Real-World Impact: Cuts PM2.5 exposure by 45%."));
   });
+
+  it("evicts stale/oldest entries in setBoundedCache and safely parses fenced Gemini JSON", () => {
+    const cache = new Map<string, { data: string; expiresAt: number }>();
+    for (let i = 0; i < 125; i++) {
+      setBoundedCache(cache, `k-${i}`, `val-${i}`, 60_000);
+    }
+    assert.ok(cache.size <= 120, `Cache size should stay bounded, got ${cache.size}`);
+
+    const parsed = parseJsonSafe('```json\n{"answer":"ok"}\n```') as { answer: string };
+    assert.equal(parsed.answer, "ok");
+    assert.equal(extractErrorMessage({ error: { message: "Nested err" } }), "Nested err");
+  });
 });
 
 describe("API Route Validation, Caching & Efficiency", () => {
@@ -265,12 +279,20 @@ describe("Accessibility & WCAG AA Compliance Regression Checks", () => {
   });
 
   it("enforces WCAG AA text contrast and accessible labels across components", () => {
-    const componentDir = path.join(rootDir, "src/components");
-    const files = fs
-      .readdirSync(componentDir)
-      .filter((f) => f.endsWith(".tsx"))
-      .map((f) => `src/components/${f}`);
-    files.push("src/App.tsx");
+    const collectTsx = (dir: string): string[] => {
+      const results: string[] = [];
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          results.push(...collectTsx(full));
+        } else if (entry.name.endsWith(".tsx")) {
+          results.push(path.relative(rootDir, full));
+        }
+      }
+      return results;
+    };
+
+    const files = [...collectTsx(path.join(rootDir, "src/components")), "src/App.tsx"];
 
     for (const file of files) {
       const src = readSrc(file);

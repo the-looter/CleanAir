@@ -1,14 +1,14 @@
 import React, { useState } from "react";
 import { Check, Sparkles, Wind } from "lucide-react";
 import { INDOOR_HACKS } from "../data/knowledgeBase";
-import { analyzeRealWorldImpact } from "../services/api";
+import { useImpactAnalysis } from "../hooks/useImpactAnalysis";
 import {
-  AiImpactAnalysis,
   CityLocation,
   FamilyProfile,
   HackCategory,
   LocalAirQualityData,
 } from "../types";
+import { CategoryMenuNav } from "./shared/CategoryMenuNav";
 
 interface IndoorHacksViewProps {
   selectedCity: CityLocation;
@@ -34,40 +34,34 @@ export const IndoorHacksView: React.FC<IndoorHacksViewProps> = ({
   onToggleHack,
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<HackCategory>("All Playbooks");
-  const [analyzingId, setAnalyzingId] = useState<string | null>(null);
-  const [analyses, setAnalyses] = useState<Record<string, AiImpactAnalysis>>({});
-  const [analysisErrors, setAnalysisErrors] = useState<Record<string, string>>({});
+  const { analyzingId, analyses, errors: analysisErrors, analyzeItem } = useImpactAnalysis(
+    selectedCity,
+    airQuality,
+    familyProfile
+  );
 
   const filteredHacks =
     selectedCategory === "All Playbooks"
       ? INDOOR_HACKS
       : INDOOR_HACKS.filter((h) => h.category === selectedCategory);
 
-  const handleAnalyze = async (hackId: string) => {
+  const categoryItems = HACK_CATEGORIES.map((cat) => ({
+    value: cat,
+    count:
+      cat === "All Playbooks"
+        ? INDOOR_HACKS.length
+        : INDOOR_HACKS.filter((h) => h.category === cat).length,
+  }));
+
+  const handleAnalyze = (hackId: string) => {
     const hack = INDOOR_HACKS.find((h) => h.id === hackId);
     if (!hack) return;
-    setAnalyzingId(hackId);
-    setAnalysisErrors((prev) => ({ ...prev, [hackId]: "" }));
-    try {
-      const result = await analyzeRealWorldImpact({
-        itemTitle: hack.title,
-        itemType: "Indoor Air Hack",
-        baselineImpact: hack.realWorldImpact,
-        locationName: selectedCity.name,
-        currentAqi: airQuality?.current.usAqi ?? 100,
-        currentPm25: airQuality?.current.pm25 ?? 35,
-        currentNo2: airQuality?.current.no2 ?? 25,
-        familyProfile,
-      });
-      setAnalyses((prev) => ({ ...prev, [hackId]: result }));
-    } catch (err) {
-      setAnalysisErrors((prev) => ({
-        ...prev,
-        [hackId]: err instanceof Error ? err.message : "Could not analyze impact",
-      }));
-    } finally {
-      setAnalyzingId(null);
-    }
+    void analyzeItem({
+      id: hack.id,
+      title: hack.title,
+      itemType: "Indoor Air Hack",
+      baselineImpact: hack.realWorldImpact,
+    });
   };
 
   return (
@@ -83,38 +77,13 @@ export const IndoorHacksView: React.FC<IndoorHacksViewProps> = ({
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         {/* Left Vertical Category Menu */}
-        <nav aria-label="Indoor hack categories" className="lg:col-span-3">
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="px-2 pb-2 text-xs font-medium text-slate-600">
-              Indoor Hack Categories
-            </div>
-            <ul className="flex flex-col gap-1">
-              {HACK_CATEGORIES.map((cat) => {
-                const count =
-                  cat === "All Playbooks"
-                    ? INDOOR_HACKS.length
-                    : INDOOR_HACKS.filter((h) => h.category === cat).length;
-                const isSelected = selectedCategory === cat;
-                return (
-                  <li key={cat}>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedCategory(cat)}
-                      aria-pressed={isSelected}
-                      className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition-colors focus-visible:outline-2 focus-visible:outline-teal-700 ${
-                        isSelected
-                          ? "bg-teal-50 font-semibold text-teal-900"
-                          : "text-slate-700 hover:bg-slate-100"
-                      }`}
-                    >
-                      <span className="truncate">{cat}</span>
-                      <span className="font-mono text-xs text-slate-600">{count}</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-
+        <CategoryMenuNav
+          ariaLabel="Indoor hack categories"
+          heading="Indoor Hack Categories"
+          items={categoryItems}
+          selected={selectedCategory}
+          onSelect={setSelectedCategory}
+          footer={
             <div className="mt-5 border-t border-slate-200 pt-4 px-2">
               <div className="text-xs font-medium text-slate-600">Active in Home</div>
               <div className="mt-1 font-mono text-xl font-semibold text-teal-800 tabular-nums">
@@ -124,8 +93,8 @@ export const IndoorHacksView: React.FC<IndoorHacksViewProps> = ({
                 Toggling protections active automatically updates your indoor exposure curve on the dashboard.
               </p>
             </div>
-          </div>
-        </nav>
+          }
+        />
 
         {/* Main Indoor Hacks Grid */}
         <div className="space-y-5 lg:col-span-9">

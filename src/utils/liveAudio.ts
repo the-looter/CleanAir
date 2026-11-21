@@ -70,7 +70,7 @@ export class Pcm24kPlayer {
     const sampleCount = Math.floor(bytes.byteLength / 2);
     if (sampleCount === 0) return;
 
-    const view = new DataView(bytes.buffer);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const float32 = new Float32Array(sampleCount);
     for (let i = 0; i < sampleCount; i++) {
       float32[i] = view.getInt16(i * 2, true) / 32768;

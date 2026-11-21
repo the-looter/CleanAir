@@ -1,14 +1,14 @@
 import React, { useState } from "react";
 import { ArrowRight, Check, Leaf, Sparkles } from "lucide-react";
 import { SUSTAINABLE_SWAPS } from "../data/knowledgeBase";
-import { analyzeRealWorldImpact } from "../services/api";
+import { useImpactAnalysis } from "../hooks/useImpactAnalysis";
 import {
-  AiImpactAnalysis,
   CityLocation,
   FamilyProfile,
   LocalAirQualityData,
   SwapCategory,
 } from "../types";
+import { CategoryMenuNav } from "./shared/CategoryMenuNav";
 
 interface SustainableSwapsViewProps {
   selectedCity: CityLocation;
@@ -34,9 +34,11 @@ export const SustainableSwapsView: React.FC<SustainableSwapsViewProps> = ({
   onToggleSwap,
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<SwapCategory>("All Swaps");
-  const [analyzingId, setAnalyzingId] = useState<string | null>(null);
-  const [analyses, setAnalyses] = useState<Record<string, AiImpactAnalysis>>({});
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  const { analyzingId, analyses, errors, analyzeItem } = useImpactAnalysis(
+    selectedCity,
+    airQuality,
+    familyProfile
+  );
 
   const adoptedSwaps = SUSTAINABLE_SWAPS.filter((s) => adoptedSwapIds.includes(s.id));
   const totalCo2Kg = adoptedSwaps.reduce((sum, s) => sum + s.annualCo2SavedKg, 0);
@@ -48,31 +50,23 @@ export const SustainableSwapsView: React.FC<SustainableSwapsViewProps> = ({
       ? SUSTAINABLE_SWAPS
       : SUSTAINABLE_SWAPS.filter((s) => s.category === selectedCategory);
 
-  const handleAnalyze = async (swapId: string) => {
+  const categoryItems = SWAP_CATEGORIES.map((cat) => ({
+    value: cat,
+    count:
+      cat === "All Swaps"
+        ? SUSTAINABLE_SWAPS.length
+        : SUSTAINABLE_SWAPS.filter((s) => s.category === cat).length,
+  }));
+
+  const handleAnalyze = (swapId: string) => {
     const swap = SUSTAINABLE_SWAPS.find((s) => s.id === swapId);
     if (!swap) return;
-    setAnalyzingId(swapId);
-    setErrors((prev) => ({ ...prev, [swapId]: "" }));
-    try {
-      const res = await analyzeRealWorldImpact({
-        itemTitle: swap.title,
-        itemType: "Sustainable Swap",
-        baselineImpact: swap.realWorldProof,
-        locationName: selectedCity.name,
-        currentAqi: airQuality?.current.usAqi ?? 100,
-        currentPm25: airQuality?.current.pm25 ?? 35,
-        currentNo2: airQuality?.current.no2 ?? 25,
-        familyProfile,
-      });
-      setAnalyses((prev) => ({ ...prev, [swapId]: res }));
-    } catch (err) {
-      setErrors((prev) => ({
-        ...prev,
-        [swapId]: err instanceof Error ? err.message : "Could not analyze swap impact",
-      }));
-    } finally {
-      setAnalyzingId(null);
-    }
+    void analyzeItem({
+      id: swap.id,
+      title: swap.title,
+      itemType: "Sustainable Swap",
+      baselineImpact: swap.realWorldProof,
+    });
   };
 
   return (
@@ -88,38 +82,13 @@ export const SustainableSwapsView: React.FC<SustainableSwapsViewProps> = ({
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
         {/* Left Vertical Category Menu */}
-        <nav aria-label="Sustainable swap categories" className="lg:col-span-3">
-          <div className="rounded-xl border border-slate-200 bg-white p-4">
-            <div className="px-2 pb-2 text-xs font-medium text-slate-600">
-              Sustainable Swap Menu
-            </div>
-            <ul className="flex flex-col gap-1">
-              {SWAP_CATEGORIES.map((cat) => {
-                const count =
-                  cat === "All Swaps"
-                    ? SUSTAINABLE_SWAPS.length
-                    : SUSTAINABLE_SWAPS.filter((s) => s.category === cat).length;
-                const isSelected = selectedCategory === cat;
-                return (
-                  <li key={cat}>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedCategory(cat)}
-                      aria-pressed={isSelected}
-                      className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition-colors focus-visible:outline-2 focus-visible:outline-teal-700 ${
-                        isSelected
-                          ? "bg-teal-50 font-semibold text-teal-900"
-                          : "text-slate-700 hover:bg-slate-100"
-                      }`}
-                    >
-                      <span className="truncate">{cat}</span>
-                      <span className="font-mono text-xs text-slate-600">{count}</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-
+        <CategoryMenuNav
+          ariaLabel="Sustainable swap categories"
+          heading="Sustainable Swap Menu"
+          items={categoryItems}
+          selected={selectedCategory}
+          onSelect={setSelectedCategory}
+          footer={
             <div className="mt-5 border-t border-slate-200 pt-4 px-2 space-y-3">
               <div>
                 <div className="text-xs font-medium text-slate-600">Annual CO₂e Avoided</div>
@@ -137,8 +106,8 @@ export const SustainableSwapsView: React.FC<SustainableSwapsViewProps> = ({
                 Equivalent to ~{equivalentTrees} mature urban trees absorbing carbon annually.
               </div>
             </div>
-          </div>
-        </nav>
+          }
+        />
 
         {/* Main Swaps Ledger */}
         <div className="space-y-5 lg:col-span-9">

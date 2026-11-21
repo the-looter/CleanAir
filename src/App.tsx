@@ -1,6 +1,7 @@
-import React, { Suspense, lazy, useCallback, useEffect, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 import { Menu } from "lucide-react";
 import { CheckInModal } from "./components/CheckInModal";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { OverviewDashboard } from "./components/OverviewDashboard";
 import { VerticalSidebar } from "./components/VerticalSidebar";
 
@@ -52,6 +53,14 @@ function readStorage<T>(key: string, fallback: T): T {
   }
 }
 
+function writeStorage(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Ignore storage quota or private-mode restriction errors
+  }
+}
+
 export default function App() {
   const [activeSection, setActiveSection] = useState<NavSection>("overview");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -84,27 +93,27 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   useEffect(() => {
-    localStorage.setItem("clearair_city_v1", JSON.stringify(selectedCity));
+    writeStorage("clearair_city_v1", selectedCity);
   }, [selectedCity]);
 
   useEffect(() => {
-    localStorage.setItem("clearair_profile_v1", JSON.stringify(familyProfile));
+    writeStorage("clearair_profile_v1", familyProfile);
   }, [familyProfile]);
 
   useEffect(() => {
-    localStorage.setItem("clearair_hacks_v1", JSON.stringify(activeHackIds));
+    writeStorage("clearair_hacks_v1", activeHackIds);
   }, [activeHackIds]);
 
   useEffect(() => {
-    localStorage.setItem("clearair_swaps_v1", JSON.stringify(adoptedSwapIds));
+    writeStorage("clearair_swaps_v1", adoptedSwapIds);
   }, [adoptedSwapIds]);
 
   useEffect(() => {
-    localStorage.setItem("clearair_health_logs_v1", JSON.stringify(healthLogs));
+    writeStorage("clearair_health_logs_v1", healthLogs);
   }, [healthLogs]);
 
   useEffect(() => {
-    localStorage.setItem("clearair_routine_steps_v1", JSON.stringify(completedStepKeys));
+    writeStorage("clearair_routine_steps_v1", completedStepKeys);
   }, [completedStepKeys]);
 
   const loadAirQuality = useCallback(async () => {
@@ -227,14 +236,15 @@ export default function App() {
         </header>
 
         <main id="main-content" tabIndex={-1} className="mx-auto w-full max-w-[1280px] flex-1 p-4 sm:p-8 focus:outline-none">
-          <Suspense
-            fallback={
-              <div className="space-y-4" aria-busy="true" aria-label="Loading section">
-                <div className="h-40 animate-pulse rounded-xl border border-slate-200 bg-white" />
-                <div className="h-64 animate-pulse rounded-xl border border-slate-200 bg-white" />
-              </div>
-            }
-          >
+          <ErrorBoundary>
+            <Suspense
+              fallback={
+                <div className="space-y-4" aria-busy="true" aria-label="Loading section">
+                  <div className="h-40 animate-pulse rounded-xl border border-slate-200 bg-white" />
+                  <div className="h-64 animate-pulse rounded-xl border border-slate-200 bg-white" />
+                </div>
+              }
+            >
           {activeSection === "overview" && (
             <OverviewDashboard
               selectedCity={selectedCity}
@@ -309,6 +319,7 @@ export default function App() {
             />
           )}
           </Suspense>
+          </ErrorBoundary>
         </main>
       </div>
 
